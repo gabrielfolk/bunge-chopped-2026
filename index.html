@@ -239,7 +239,7 @@
   }
   #sec-chop { grid-column: span 4; display: flex; flex-direction: column; }
   #sec-stats { grid-column: span 8; }
-  #sec-insights, #sec-boombust, #sec-bench, #sec-live, #sec-standings, #sec-roster {
+  #sec-insights, #sec-boombust, #sec-bench, #sec-live, #sec-graveyard, #sec-roster {
     grid-column: span 12;
   }
   .chop-card { flex: 1; box-sizing: border-box; }
@@ -322,38 +322,47 @@
     color: #fff;
   }
 
-  /* ---------- Standings table ---------- */
-  .table-wrap {
+  /* ---------- Graveyard: one tombstone per chopped team ---------- */
+  .graveyard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 14px;
+  }
+  .graveyard-empty {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 20px;
+    border-radius: 18px;
     box-shadow: var(--shadow);
-    overflow-x: auto;
-  }
-  table { width: 100%; border-collapse: collapse; min-width: 560px; }
-  tbody tr:hover td { background: var(--surface-2); }
-  tbody tr.podium td { background: var(--accent2-tint); }
-  th {
-    text-align: left;
-    font-family: 'Oswald', system-ui, sans-serif;
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    padding: 22px 20px;
     color: var(--ink-faint);
-    font-weight: 600;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  td {
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
     font-size: 13.5px;
+    text-align: center;
   }
-  tr:last-child td { border-bottom: none; }
-  th.num, td.num { text-align: right; font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
-  .team-cell { display: flex; align-items: center; gap: 10px; }
-  .team-cell .name { font-weight: 700; }
-  .team-cell .owner { color: var(--ink-faint); font-size: 12px; }
+  .tombstone-card {
+    background: linear-gradient(160deg, var(--surface) 0%, var(--surface-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px 16px 46px 46px;
+    box-shadow: var(--shadow);
+    padding: 18px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+  }
+  .tombstone-skull { font-size: 20px; filter: grayscale(1); opacity: 0.75; }
+  .tombstone-team { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 2px; }
+  .tombstone-name { font-family: 'Oswald', system-ui, sans-serif; font-weight: 600; font-size: 15px; }
+  .tombstone-owner { color: var(--ink-faint); font-size: 11.5px; }
+  .tombstone-epitaph {
+    margin-top: 6px;
+    font-size: 11.5px;
+    font-style: italic;
+    color: var(--ink-muted);
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+    width: 100%;
+  }
 
   /* ---------- Stat tiles ---------- */
   .stat-grid {
@@ -748,21 +757,12 @@
   <div class="bench-list liftable" id="bench-list"></div>
 </section>
 
-<section id="sec-standings">
+<section id="sec-graveyard">
   <div class="section-head">
-    <h2>Standings</h2>
-    <span class="note">Sorted by record, then live points</span>
+    <h2>Graveyard</h2>
+    <span class="note">Chopped teams, rest in pieces</span>
   </div>
-  <div class="table-wrap liftable">
-    <table>
-      <thead>
-        <tr>
-          <th>#</th><th>Team</th><th class="num">W&nbsp;-&nbsp;L&nbsp;-&nbsp;T</th><th class="num">Live Pts</th><th class="num">Draft Slot</th>
-        </tr>
-      </thead>
-      <tbody id="standings-body"></tbody>
-    </table>
-  </div>
+  <div class="graveyard-grid" id="graveyard-grid"></div>
 </section>
 
 <section id="sec-roster">
@@ -800,6 +800,7 @@
   const PLAYERS_CACHE_KEY = 'bunge_players_cache_v1';
   const PROJECTIONS_CACHE_PREFIX = 'bunge_projections_cache_v1';
   const STATE_CACHE_KEY = 'bunge_state_cache_v1';
+  const CHOP_HISTORY_CACHE_PREFIX = 'bunge_matchups_history_v1';
   const PLAYERS_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
   const PROJECTIONS_MAX_AGE_MS = 60 * 60 * 1000; // 1h — projections don't move mid-game like actual stats do
   const BOOM_BUST_MIN_PROJECTION = 2; // filter out irrelevant scrubs so the list isn't noise
@@ -809,7 +810,7 @@
   const AVATAR_COLORS = ['--avatar-a', '--avatar-b', '--avatar-c', '--avatar-d', '--avatar-e', '--avatar-f'];
   const POS_VAR = { QB: '--pos-qb', RB: '--pos-rb', WR: '--pos-wr', TE: '--pos-te', FLEX: '--pos-te' };
 
-  const state = { league: null, teams: [], players: {}, matchups: [], txns: [], projections: {}, stats: {} };
+  const state = { league: null, teams: [], players: {}, matchups: [], txns: [], projections: {}, stats: {}, chopHistory: {} };
   let lastFetchOk = null; // Date of last successful fetch
   let lastFetchError = null;
 
@@ -875,6 +876,7 @@
         wins: s.wins || 0,
         losses: s.losses || 0,
         ties: s.ties || 0,
+        eliminated: !!s.eliminated,
         fpts: (s.fpts || 0) + (s.fpts_decimal || 0) / 100,
         waiver_position: s.waiver_position,
         waiver_budget_used: s.waiver_budget_used,
@@ -897,6 +899,48 @@
     }));
   }
 
+  // Past weeks' matchups are final and never change, so cache them
+  // indefinitely (unlike the current week's, which is polled fresh).
+  async function loadWeekMatchupsCached(season, week) {
+    const cacheKey = `${CHOP_HISTORY_CACHE_PREFIX}_${season}_${week}`;
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.data) return cached.data;
+      }
+    } catch (e) { /* ignore cache errors */ }
+    const data = await fetchJSON(`${API}/league/${LEAGUE_ID}/matchups/${week}`);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ data })); } catch (e) { /* quota etc, ignore */ }
+    return data;
+  }
+
+  // Sleeper only exposes a final settings.eliminated flag per roster, not
+  // which week it happened in — so replay the league's own chop rule (lowest
+  // score among teams still alive is out each week) over the completed weeks
+  // to recover it for the Graveyard section.
+  async function computeChopHistory(teams, season, currentWeek) {
+    const eliminatedIds = new Set(teams.filter(t => t.eliminated).map(t => t.roster_id));
+    const history = {};
+    if (!eliminatedIds.size || currentWeek <= 1) return history;
+    const weeks = [];
+    for (let w = 1; w < currentWeek; w++) weeks.push(w);
+    const weekMatchups = await Promise.all(weeks.map(w => loadWeekMatchupsCached(season, w).catch(() => [])));
+    const active = new Set(teams.map(t => t.roster_id));
+    weeks.forEach((w, i) => {
+      if (!active.size) return;
+      const rows = (weekMatchups[i] || []).filter(m => active.has(m.roster_id));
+      if (!rows.length) return;
+      const minPts = Math.min(...rows.map(m => m.points || 0));
+      const chopped = rows.find(m => (m.points || 0) === minPts && eliminatedIds.has(m.roster_id));
+      if (chopped) {
+        history[chopped.roster_id] = { week: w, points: chopped.points || 0 };
+        active.delete(chopped.roster_id);
+      }
+    });
+    return history;
+  }
+
   async function loadLiveState() {
     const [nflState, league, users, rosters, drafts] = await Promise.all([
       fetchJSON(`${API}/state/nfl`),
@@ -914,6 +958,8 @@
       loadPlayers(),
     ]);
     const draftOrder = drafts && drafts[0] ? drafts[0].draft_order : null;
+    const teamsBuilt = buildTeams(users, rosters, draftOrder);
+    const chopHistory = await computeChopHistory(teamsBuilt, league.season, week);
 
     return {
       league: {
@@ -928,12 +974,13 @@
         playoff_week_start: (league.settings && league.settings.playoff_week_start) || null,
         last_synced: new Date().toISOString(),
       },
-      teams: buildTeams(users, rosters, draftOrder),
+      teams: teamsBuilt,
       players,
       matchups: buildMatchups(matchupsRaw),
       txns: txns || [],
       projections: projectionsRaw || {},
       stats: statsRaw || {},
+      chopHistory,
     };
   }
 
@@ -1146,7 +1193,7 @@
   }
 
   function render() {
-    const { league, teams, matchups, txns } = state;
+    const { league, teams, matchups, txns, chopHistory } = state;
     if (!league) return; // nothing loaded yet
     const teamByRoster = new Map(teams.map(t => [t.roster_id, t]));
     const matchupByRoster = new Map(matchups.map(m => [m.roster_id, m]));
@@ -1244,46 +1291,52 @@
       board.appendChild(row);
     });
 
-    // ---- Standings ----
-    const standingsBody = document.getElementById('standings-body');
-    standingsBody.innerHTML = '';
-    const standingsSorted = teams.slice().sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      if (a.losses !== b.losses) return a.losses - b.losses;
-      const ma = matchupByRoster.get(a.roster_id), mb = matchupByRoster.get(b.roster_id);
-      return (mb ? mb.points : 0) - (ma ? ma.points : 0);
-    });
-    standingsSorted.forEach((t, i) => {
-      const m = matchupByRoster.get(t.roster_id);
-      const tr = document.createElement('tr');
-      if (i < 3) tr.className = 'podium';
-      const tdRank = document.createElement('td');
-      tdRank.className = 'mono';
-      tdRank.textContent = i + 1;
-      const tdTeam = document.createElement('td');
-      const cell = document.createElement('div');
-      cell.className = 'team-cell';
-      cell.appendChild(avatarEl(t));
-      const info = document.createElement('div');
-      info.innerHTML = `<div class="name">${esc(t.team_name || t.display_name)}</div>${t.team_name ? `<div class="owner">${esc(t.display_name)}</div>` : ''}`;
-      cell.appendChild(info);
-      tdTeam.appendChild(cell);
-      const tdRec = document.createElement('td');
-      tdRec.className = 'num mono';
-      tdRec.textContent = `${t.wins}-${t.losses}-${t.ties}`;
-      const tdPts = document.createElement('td');
-      tdPts.className = 'num mono';
-      tdPts.textContent = fmt(m ? m.points : 0);
-      const tdDraft = document.createElement('td');
-      tdDraft.className = 'num mono';
-      tdDraft.textContent = t.draft_position ? `#${t.draft_position}` : '—';
-      tr.appendChild(tdRank);
-      tr.appendChild(tdTeam);
-      tr.appendChild(tdRec);
-      tr.appendChild(tdPts);
-      tr.appendChild(tdDraft);
-      standingsBody.appendChild(tr);
-    });
+    // ---- Graveyard: teams chopped (eliminated) by the weekly low score ----
+    const graveyardGrid = document.getElementById('graveyard-grid');
+    graveyardGrid.innerHTML = '';
+    const chopped = teams.filter(t => t.eliminated);
+    if (!chopped.length) {
+      const empty = document.createElement('div');
+      empty.className = 'graveyard-empty';
+      empty.textContent = "Nobody's been chopped yet — everyone lives to fight another week.";
+      graveyardGrid.appendChild(empty);
+    } else {
+      const graveyardSorted = chopped.slice().sort((a, b) => {
+        const ha = chopHistory[a.roster_id], hb = chopHistory[b.roster_id];
+        if (ha && hb) return ha.week - hb.week;
+        if (ha) return -1;
+        if (hb) return 1;
+        return a.fpts - b.fpts;
+      });
+      graveyardSorted.forEach(t => {
+        const h = chopHistory[t.roster_id];
+        const card = document.createElement('div');
+        card.className = 'tombstone-card liftable';
+        const skull = document.createElement('div');
+        skull.className = 'tombstone-skull';
+        skull.textContent = '💀';
+        const teamCell = document.createElement('div');
+        teamCell.className = 'tombstone-team';
+        teamCell.appendChild(avatarEl(t));
+        const nameEl = document.createElement('div');
+        nameEl.className = 'tombstone-name';
+        nameEl.textContent = t.team_name || t.display_name;
+        teamCell.appendChild(nameEl);
+        if (t.team_name) {
+          const ownerEl = document.createElement('div');
+          ownerEl.className = 'tombstone-owner';
+          ownerEl.textContent = t.display_name;
+          teamCell.appendChild(ownerEl);
+        }
+        const epitaph = document.createElement('div');
+        epitaph.className = 'tombstone-epitaph';
+        epitaph.textContent = h ? `Chopped Week ${h.week} · ${fmt(h.points)} pts` : `Final score: ${fmt(t.fpts)} pts`;
+        card.appendChild(skull);
+        card.appendChild(teamCell);
+        card.appendChild(epitaph);
+        graveyardGrid.appendChild(card);
+      });
+    }
 
     function teamLabel(rid) {
       const t = teamByRoster.get(rid);
@@ -1754,6 +1807,7 @@
     state.txns = data.txns;
     state.projections = data.projections || {};
     state.stats = data.stats || {};
+    state.chopHistory = data.chopHistory || {};
   }
 
   async function refresh() {
