@@ -718,15 +718,15 @@
 <section id="sec-boombust">
   <div class="section-head">
     <h2>Boom &amp; Bust</h2>
-    <span class="note">Live points vs. Sleeper's pre-game projection, rostered players only</span>
+    <span class="note" id="boombust-note">Live points vs. Sleeper's pre-game projection, rostered players only</span>
   </div>
   <div class="boombust-grid">
     <div class="boombust-col liftable">
-      <div class="boombust-label boom">🚀 Overperforming</div>
+      <div class="boombust-label boom" id="boom-label">🚀 Overperforming</div>
       <div id="boom-list"></div>
     </div>
     <div class="boombust-col liftable">
-      <div class="boombust-label bust">📉 Underperforming</div>
+      <div class="boombust-label bust" id="bust-label">📉 Underperforming</div>
       <div id="bust-list"></div>
     </div>
   </div>
@@ -1332,6 +1332,21 @@
     });
     const worstBustRows = boomBustRows.slice().sort((a, b) => a.delta - b.delta);
 
+    // Before actual stats exist for the week (no games played yet), there's
+    // nothing to compare projections against — fall back to showing the
+    // projections alone so the section isn't just empty. Reverts to the
+    // real delta view automatically once any actual stats come in.
+    const projOnlyRows = [];
+    if (!boomBustRows.length) {
+      rosteredIds.forEach(pid => {
+        const proj = state.projections[pid];
+        if (!proj || proj.pts_ppr == null || proj.pts_ppr < BOOM_BUST_MIN_PROJECTION) return;
+        const owners = teams.filter(t => t.players.includes(pid)).map(t => t.team_name || t.display_name);
+        projOnlyRows.push({ pid, projPts: proj.pts_ppr, owners });
+      });
+      projOnlyRows.sort((a, b) => b.projPts - a.projPts);
+    }
+
     // ---- Stat tiles: Trash Talk Stats — blunders & mess-ups only ----
     const statGrid = document.getElementById('stat-grid');
     statGrid.innerHTML = '';
@@ -1589,7 +1604,7 @@
 
     // ---- Boom & bust: rostered players whose actual points this week are
     // furthest above/below Sleeper's pre-game projection ----
-    function renderBoomBustList(container, rows, kind) {
+    function renderBoomBustList(container, rows, kind, mode) {
       container.innerHTML = '';
       if (!rows.length) {
         const empty = document.createElement('div');
@@ -1614,12 +1629,18 @@
         const metaEl = document.createElement('div');
         metaEl.className = 'bb-meta';
         const ownerPart = r.owners.length ? ` · ${r.owners.join(', ')}` : '';
-        metaEl.textContent = `${fmt(r.projPts)} proj → ${fmt(r.actualPts)} actual${ownerPart}`;
+        const deltaEl = document.createElement('div');
+        if (mode === 'proj') {
+          metaEl.textContent = `${fmt(r.projPts)} projected${ownerPart}`;
+          deltaEl.className = 'bb-delta';
+          deltaEl.textContent = fmt(r.projPts);
+        } else {
+          metaEl.textContent = `${fmt(r.projPts)} proj → ${fmt(r.actualPts)} actual${ownerPart}`;
+          deltaEl.className = `bb-delta ${kind}`;
+          deltaEl.textContent = `${r.delta > 0 ? '+' : ''}${fmt(r.delta)}`;
+        }
         mid.appendChild(nameEl);
         mid.appendChild(metaEl);
-        const deltaEl = document.createElement('div');
-        deltaEl.className = `bb-delta ${kind}`;
-        deltaEl.textContent = `${r.delta > 0 ? '+' : ''}${fmt(r.delta)}`;
         row.appendChild(badge);
         row.appendChild(mid);
         row.appendChild(deltaEl);
@@ -1627,10 +1648,24 @@
       });
     }
 
-    const boomRows = boomBustRows.slice().sort((a, b) => b.delta - a.delta).slice(0, BOOM_BUST_COUNT);
-    const bustRows = worstBustRows.slice(0, BOOM_BUST_COUNT);
-    renderBoomBustList(document.getElementById('boom-list'), boomRows, 'boom');
-    renderBoomBustList(document.getElementById('bust-list'), bustRows, 'bust');
+    const boombustNote = document.getElementById('boombust-note');
+    const boomLabel = document.getElementById('boom-label');
+    const bustLabel = document.getElementById('bust-label');
+    if (!boomBustRows.length && projOnlyRows.length) {
+      boombustNote.textContent = "No live stats yet — showing Sleeper's pre-game projections";
+      boomLabel.textContent = '🚀 Highest Projected';
+      bustLabel.textContent = '📉 Lowest Projected';
+      renderBoomBustList(document.getElementById('boom-list'), projOnlyRows.slice(0, BOOM_BUST_COUNT), 'boom', 'proj');
+      renderBoomBustList(document.getElementById('bust-list'), projOnlyRows.slice(-BOOM_BUST_COUNT).reverse(), 'bust', 'proj');
+    } else {
+      boombustNote.textContent = "Live points vs. Sleeper's pre-game projection, rostered players only";
+      boomLabel.textContent = '🚀 Overperforming';
+      bustLabel.textContent = '📉 Underperforming';
+      const boomRows = boomBustRows.slice().sort((a, b) => b.delta - a.delta).slice(0, BOOM_BUST_COUNT);
+      const bustRows = worstBustRows.slice(0, BOOM_BUST_COUNT);
+      renderBoomBustList(document.getElementById('boom-list'), boomRows, 'boom');
+      renderBoomBustList(document.getElementById('bust-list'), bustRows, 'bust');
+    }
 
     // ---- Bench points ----
     const benchList = document.getElementById('bench-list');
