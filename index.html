@@ -1714,19 +1714,6 @@
       }
     }
 
-    // FAAB Whale: most waiver budget already burned this season.
-    {
-      const spenders = teams.filter(t => (t.waiver_budget_used || 0) > 0).sort((a, b) => b.waiver_budget_used - a.waiver_budget_used);
-      if (spenders.length) {
-        insightTiles.push({
-          eyebrow: 'FAAB Whale',
-          headline: teamLabel(spenders[0].roster_id),
-          detail: `${spenders[0].waiver_budget_used} waiver budget spent this season already`,
-          rows: spenders.map(t => ({ label: teamLabel(t.roster_id), value: `${t.waiver_budget_used}` })),
-        });
-      }
-    }
-
     // Set It and Forget It: fewest roster moves all season, while the league
     // as a whole has clearly been active. Uses the real per-week transaction
     // counts (txnSeasonCountByRoster) rather than Sleeper's
@@ -1774,25 +1761,6 @@
           headline: teamLabel(closest.safe.roster_id),
           detail: `Stayed off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
           rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}`, value: fmt(g.gap) })),
-        });
-      }
-    }
-
-    // Closest Call: the tightest gap anywhere on the live board right now.
-    {
-      const ranked = matchups.slice().sort((a, b) => b.points - a.points);
-      if (ranked.length >= 2) {
-        let minGap = Infinity, idx = 0;
-        for (let i = 0; i < ranked.length - 1; i++) {
-          const gap = ranked[i].points - ranked[i + 1].points;
-          if (gap < minGap) { minGap = gap; idx = i; }
-        }
-        const a = ranked[idx], b = ranked[idx + 1];
-        insightTiles.push({
-          eyebrow: 'Closest Call',
-          headline: `${teamLabel(a.roster_id)} vs ${teamLabel(b.roster_id)}`,
-          detail: `Separated by just ${fmt(minGap)} point${minGap === 1 ? '' : 's'} on the live board`,
-          rows: [{ label: teamLabel(a.roster_id), value: fmt(a.points) }, { label: teamLabel(b.roster_id), value: fmt(b.points) }],
         });
       }
     }
