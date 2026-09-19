@@ -1281,11 +1281,14 @@
       ? `Last synced ${new Date(league.last_synced).toLocaleString()}`
       : '';
 
-    // ---- Chopping block: lowest score among teams still alive (already-
-    // chopped teams live in the Graveyard now, not here). Before live scores
-    // start this week there's nothing to rank yet, so fall back to Sleeper's
-    // pre-game projections — reverts to real live points automatically the
-    // moment any scoring comes in. ----
+    // ---- Chopping block: a single forecast, always based on projected
+    // points, not live actual points — mid-week, live totals are misleading
+    // noise (teams whose games haven't kicked off yet all sit at 0, which
+    // used to produce a card "tied" between half the league). The Live
+    // Leaderboard section below is where real-time actual scores belong;
+    // this card always shows exactly one team: the projected lowest scorer
+    // among teams still alive (already-chopped teams live in the Graveyard
+    // now, not here). ----
     const chopCard = document.getElementById('chop-card');
     const chopNote = document.getElementById('chop-note');
     const activeMatchups = matchups.filter(m => {
@@ -1293,31 +1296,24 @@
       return !t || !t.eliminated;
     });
     if (activeMatchups.length) {
-      const isProjected = !activeMatchups.some(m => m.points > 0);
       const teamProjTotal = t => (t.starters || []).reduce((sum, pid) => {
         const proj = state.projections[pid];
         return sum + (proj && proj.pts_ppr != null ? proj.pts_ppr : 0);
       }, 0);
-      const scored = isProjected
-        ? activeMatchups.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) }))
-        : activeMatchups.map(m => ({ roster_id: m.roster_id, points: m.points }));
+      const scored = activeMatchups.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) }));
       const byPointsAsc = scored.slice().sort((a, b) => a.points - b.points);
-      const lowestPts = byPointsAsc[0].points;
-      const onTheBlock = byPointsAsc.filter(m => m.points === lowestPts);
-      const featured = onTheBlock[0];
+      const featured = byPointsAsc[0];
       const featuredTeam = teamByRoster.get(featured.roster_id) || {};
-      const nextUp = byPointsAsc.find(m => m.points > lowestPts);
-      const margin = nextUp ? nextUp.points - lowestPts : null;
+      const nextUp = byPointsAsc.find(m => m.points > featured.points);
+      const margin = nextUp ? nextUp.points - featured.points : null;
 
-      chopNote.textContent = isProjected
-        ? `Week ${league.current_week} · projected, before kickoff`
-        : `Week ${league.current_week} · dead last, live`;
+      chopNote.textContent = `Week ${league.current_week} · lowest projected score`;
       chopCard.innerHTML = `
         <div class="chop-visual">${CHOP_SVG}</div>
         <div class="chop-info">
-          <div class="chop-tag">☠️ On the Chopping Block${isProjected ? ' (Projected)' : ''}</div>
+          <div class="chop-tag">☠️ On the Chopping Block (Projected)</div>
           <div class="chop-team"></div>
-          <div class="chop-pts">${fmt(featured.points)} ${isProjected ? 'projected points' : 'points'}</div>
+          <div class="chop-pts">${fmt(featured.points)} projected points</div>
           <div class="chop-note"></div>
         </div>`;
       const teamCell = chopCard.querySelector('.chop-team');
@@ -1327,17 +1323,7 @@
       nameEl.textContent = featuredTeam.team_name || featuredTeam.display_name || `Roster ${featured.roster_id}`;
       teamCell.appendChild(nameEl);
       const noteEl = chopCard.querySelector('.chop-note');
-      if (onTheBlock.length > 1) {
-        const others = onTheBlock.slice(1).map(m => {
-          const t = teamByRoster.get(m.roster_id);
-          return t ? (t.team_name || t.display_name) : `Roster ${m.roster_id}`;
-        });
-        noteEl.textContent = `Tied for the chop with ${others.join(', ')} — could go either way`;
-      } else {
-        noteEl.textContent = isProjected
-          ? `Just ${fmt(margin)} points behind on paper`
-          : `Just ${fmt(margin)} points from safety`;
-      }
+      noteEl.textContent = margin != null ? `Just ${fmt(margin)} points behind on paper` : '';
     } else {
       chopCard.innerHTML = '';
     }
