@@ -1522,16 +1522,15 @@
       });
     });
 
-    // Season transaction totals + full move history per team (the weekly
-    // txnCountByRoster below only covers the current week).
+    // Season transaction totals per team — real per-week counts, used by
+    // League Insights' "Set It and Forget It" instead of Sleeper's
+    // settings.total_moves, which this league never actually populates
+    // (it's 0 for every roster even when transactions.length says otherwise).
     const txnSeasonCountByRoster = new Map();
-    const txnSeasonMovesByRoster = new Map();
     allWeekNumbers.forEach((wk, i) => {
       allWeeksTxns[i].forEach(tx => {
         (tx.roster_ids || []).forEach(rid => {
           txnSeasonCountByRoster.set(rid, (txnSeasonCountByRoster.get(rid) || 0) + 1);
-          if (!txnSeasonMovesByRoster.has(rid)) txnSeasonMovesByRoster.set(rid, []);
-          txnSeasonMovesByRoster.get(rid).push({ tx, week: wk });
         });
       });
     });
@@ -1553,14 +1552,14 @@
       .map(([pid, e]) => ({ pid, ...e, owners: teams.filter(t => t.players.includes(pid)).map(t => t.team_name || t.display_name) }))
       .sort((a, b) => a.deltaSum - b.deltaSum);
 
-    // ---- Stat tiles: Trash Talk Stats — blunders & mess-ups only ----
+    // ---- Stat tiles: Trash Talk Stats — the 4 best chop-relevant blunders.
+    // Kept tight to the two moments that actually put a team on the block
+    // (a live bust, a live benching) plus the two season-long curses behind
+    // them — Lineup Landmines and Trigger Finger live in League Insights
+    // instead, and weekly Trigger Finger was cut since panic waiver moves
+    // don't actually drive who gets chopped the way scoring blunders do. ----
     const statGrid = document.getElementById('stat-grid');
     statGrid.innerHTML = '';
-
-    const txnCountByRoster = new Map();
-    txns.forEach(tx => { (tx.roster_ids || []).forEach(rid => txnCountByRoster.set(rid, (txnCountByRoster.get(rid) || 0) + 1)); });
-    let txnLeaderRid = null, txnMax = 0;
-    txnCountByRoster.forEach((v, k) => { if (v > txnMax) { txnMax = v; txnLeaderRid = k; } });
 
     const tiles = [];
     if (worstBustRows.length && worstBustRows[0].delta < 0) {
@@ -1584,38 +1583,7 @@
         emptyMessage: 'No bench points wasted yet.',
       });
     }
-    if (landmineCountByRoster.size) {
-      let landmineLeaderRid = null, landmineMax = 0;
-      landmineCountByRoster.forEach((v, k) => { if (v > landmineMax) { landmineMax = v; landmineLeaderRid = k; } });
-      tiles.push({
-        eyebrow: 'Lineup Landmines',
-        headline: teamLabel(landmineLeaderRid),
-        detail: `${landmineMax} starter${landmineMax === 1 ? '' : 's'} Out/Inactive and still in the lineup — oof`,
-        rows: landmines.filter(l => l.rid === landmineLeaderRid).map(l => ({ label: l.player, value: l.flag })),
-        emptyMessage: 'No landmines in this lineup.',
-      });
-    }
-    if (txnLeaderRid != null) {
-      tiles.push({
-        eyebrow: 'Trigger Finger',
-        headline: teamLabel(txnLeaderRid),
-        detail: `${txnMax} roster move${txnMax === 1 ? '' : 's'} this week — panic much?`,
-        rows: Array.from(txnCountByRoster.entries())
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 8)
-          .map(([rid, count]) => ({
-            label: teamLabel(rid),
-            value: `${count} move${count === 1 ? '' : 's'}`,
-            moves: txns
-              .filter(tx => (tx.roster_ids || []).includes(rid))
-              .sort((a, b) => (b.created || 0) - (a.created || 0))
-              .map(tx => describeTransactionForRoster(tx, rid)),
-          })),
-        emptyMessage: "Nobody's touched their roster. Bold strategy.",
-      });
-    }
-
-    // ---- The three tiles below only kick in once at least one full week is
+    // ---- The two tiles below only kick in once at least one full week is
     // in the books (historyWeeks.length > 0) — before that there's no season
     // history to speak of yet, just the current week's numbers above. ----
     if (historyWeeks.length) {
@@ -1627,27 +1595,6 @@
           detail: `${fmt(benchSeasonSorted[0][1])} points left on the bench across weeks 1–${league.current_week} — season-long roster mismanagement`,
           rows: benchSeasonSorted.map(([rid, v]) => ({ label: teamLabel(rid), value: fmt(v) })),
           emptyMessage: 'No bench points wasted yet this season.',
-        });
-      }
-
-      let txnSeasonLeaderRid = null, txnSeasonMax = 0;
-      txnSeasonCountByRoster.forEach((v, k) => { if (v > txnSeasonMax) { txnSeasonMax = v; txnSeasonLeaderRid = k; } });
-      if (txnSeasonLeaderRid != null) {
-        tiles.push({
-          eyebrow: 'Trigger Finger — Season',
-          headline: teamLabel(txnSeasonLeaderRid),
-          detail: `${txnSeasonMax} roster move${txnSeasonMax === 1 ? '' : 's'} across weeks 1–${league.current_week} — can't leave the roster alone`,
-          rows: Array.from(txnSeasonCountByRoster.entries())
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 8)
-            .map(([rid, count]) => ({
-              label: teamLabel(rid),
-              value: `${count} move${count === 1 ? '' : 's'}`,
-              moves: (txnSeasonMovesByRoster.get(rid) || [])
-                .sort((a, b) => (b.tx.created || 0) - (a.tx.created || 0))
-                .map(({ tx, week }) => `Week ${week} — ${describeTransactionForRoster(tx, rid)}`),
-            })),
-          emptyMessage: "Nobody's touched their roster all season. Bold strategy.",
         });
       }
 
@@ -1781,39 +1728,52 @@
     }
 
     // Set It and Forget It: fewest roster moves all season, while the league
-    // as a whole has clearly been active.
+    // as a whole has clearly been active. Uses the real per-week transaction
+    // counts (txnSeasonCountByRoster) rather than Sleeper's
+    // settings.total_moves, which this league never populates (always 0).
     {
-      const withMoves = teams.filter(t => typeof t.total_moves === 'number');
-      const maxMoves = withMoves.length ? Math.max(...withMoves.map(t => t.total_moves)) : 0;
+      const maxMoves = txnSeasonCountByRoster.size ? Math.max(...txnSeasonCountByRoster.values()) : 0;
       if (maxMoves > 0) {
-        const quietest = withMoves.slice().sort((a, b) => a.total_moves - b.total_moves)[0];
+        const activeRosters = teams.map(t => t.roster_id);
+        const moveCounts = activeRosters.map(rid => ({ rid, count: txnSeasonCountByRoster.get(rid) || 0 }));
+        const quietest = moveCounts.slice().sort((a, b) => a.count - b.count)[0];
         insightTiles.push({
           eyebrow: 'Set It and Forget It',
-          headline: teamLabel(quietest.roster_id),
-          detail: `Just ${quietest.total_moves} roster move${quietest.total_moves === 1 ? '' : 's'} all season — autopilot engaged`,
-          rows: withMoves.slice().sort((a, b) => a.total_moves - b.total_moves).map(t => ({ label: teamLabel(t.roster_id), value: `${t.total_moves} moves` })),
+          headline: teamLabel(quietest.rid),
+          detail: `Just ${quietest.count} roster move${quietest.count === 1 ? '' : 's'} all season — autopilot engaged`,
+          rows: moveCounts.sort((a, b) => a.count - b.count).map(m => ({ label: teamLabel(m.rid), value: `${m.count} move${m.count === 1 ? '' : 's'}` })),
         });
       }
     }
 
-    // Schedule Luck: standings rank (wins) vs. scoring rank (points for) —
-    // a big gap either way is the classic "are they actually good" tell.
+    // Squeaked By: this is a chop league, not head-to-head, so there's no
+    // such thing as "schedule luck" — every roster's wins/losses sit at 0-0
+    // here since Sleeper only tracks that for head-to-head formats. What
+    // actually matters is how close anyone's come to being the lowest
+    // scorer: the tightest gap, in any week, between the team that got
+    // chopped (or would have) and the team just above them. chopHistory
+    // tells us who was already out by a given week, so they're excluded
+    // from that week's comparison.
     {
-      const byWins = teams.slice().sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses) || b.fpts - a.fpts);
-      const byFpts = teams.slice().sort((a, b) => b.fpts - a.fpts);
-      const winRank = new Map(byWins.map((t, i) => [t.roster_id, i + 1]));
-      const fptsRank = new Map(byFpts.map((t, i) => [t.roster_id, i + 1]));
-      let luckyRid = null, luckyDelta = 0;
-      teams.forEach(t => {
-        const delta = fptsRank.get(t.roster_id) - winRank.get(t.roster_id);
-        if (delta > luckyDelta) { luckyDelta = delta; luckyRid = t.roster_id; }
+      const weeklyGaps = [];
+      allWeekNumbers.forEach((wk, i) => {
+        const wm = allWeeksMatchups[i].filter(m => {
+          const ch = chopHistory[m.roster_id];
+          return !ch || ch.week >= wk;
+        });
+        if (wk === league.current_week && !wm.some(m => m.points > 0)) return; // no live scores yet this week
+        if (wm.length < 2) return;
+        const ranked = wm.slice().sort((a, b) => a.points - b.points);
+        weeklyGaps.push({ week: wk, gap: ranked[1].points - ranked[0].points, bottom: ranked[0], safe: ranked[1] });
       });
-      if (luckyRid != null && luckyDelta >= 2) {
+      weeklyGaps.sort((a, b) => a.gap - b.gap);
+      if (weeklyGaps.length) {
+        const closest = weeklyGaps[0];
         insightTiles.push({
-          eyebrow: 'Schedule Luck',
-          headline: teamLabel(luckyRid),
-          detail: `#${winRank.get(luckyRid)} in the standings but only #${fptsRank.get(luckyRid)} in points scored — living charmed`,
-          rows: teams.map(t => ({ label: teamLabel(t.roster_id), value: `record #${winRank.get(t.roster_id)} · points #${fptsRank.get(t.roster_id)}` })),
+          eyebrow: 'Squeaked By',
+          headline: teamLabel(closest.safe.roster_id),
+          detail: `Stayed off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
+          rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}`, value: fmt(g.gap) })),
         });
       }
     }
