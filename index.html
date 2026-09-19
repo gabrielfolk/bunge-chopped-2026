@@ -489,21 +489,13 @@
   .bench-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--critical) 55%, var(--surface)), var(--critical)); }
   .bench-val { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; text-align: right; color: var(--ink-muted); }
 
-  /* ---------- FAAB remaining chart (shares .bench-list's card chrome) ---------- */
-  .faab-row {
-    display: grid;
-    grid-template-columns: 140px 1fr 56px;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .faab-row:last-child { border-bottom: none; }
-  .faab-row .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .faab-row.is-eliminated .name { color: var(--ink-faint); }
-  .faab-track { height: 9px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  /* ---------- FAAB remaining chart (shares .scoreboard's card chrome and
+     .score-row's rank/avatar/stacked-bar layout from Live Leaderboard, with
+     its own fill color since this is a neutral season fact, not a live
+     score). ---------- */
   .faab-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent2) 55%, var(--surface)), var(--accent2)); }
-  .faab-val { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; text-align: right; color: var(--ink-muted); }
+  .faab-fill.is-empty { background: var(--critical); }
+  .faab-pts.is-empty { color: var(--critical); }
 
   /* ---------- Boom & bust ---------- */
   .boombust-grid {
@@ -778,7 +770,7 @@
     <h2>FAAB Remaining</h2>
     <span class="note" id="faab-note"></span>
   </div>
-  <div class="bench-list liftable" id="faab-list"></div>
+  <div class="scoreboard liftable" id="faab-list"></div>
 </section>
 
 <section id="sec-graveyard">
@@ -1899,25 +1891,40 @@
     const faabList = document.getElementById('faab-list');
     faabList.innerHTML = '';
     teams.slice()
-      .map(t => ({ roster_id: t.roster_id, eliminated: t.eliminated, remaining: Math.max(0, faabBudget - (t.waiver_budget_used || 0)) }))
+      .map(t => ({ roster_id: t.roster_id, remaining: Math.max(0, faabBudget - (t.waiver_budget_used || 0)) }))
       .sort((a, b) => b.remaining - a.remaining)
-      .forEach(f => {
+      .forEach((f, i) => {
+        const isEmpty = f.remaining === 0;
+        const t = teamByRoster.get(f.roster_id);
         const row = document.createElement('div');
-        row.className = 'faab-row' + (f.eliminated ? ' is-eliminated' : '');
-        const name = document.createElement('div');
-        name.className = 'name';
-        name.textContent = teamLabel(f.roster_id);
+        row.className = 'score-row';
+        const rank = document.createElement('div');
+        rank.className = 'score-rank mono';
+        rank.textContent = i + 1;
+        const team = document.createElement('div');
+        team.className = 'score-team';
+        const nameWrap = document.createElement('div');
+        nameWrap.style.minWidth = '0';
+        nameWrap.style.flex = '1';
+        const nm = document.createElement('div');
+        nm.className = 'score-name';
+        nm.textContent = teamLabel(f.roster_id);
         const track = document.createElement('div');
-        track.className = 'faab-track';
+        track.className = 'score-bar-track';
         const fill = document.createElement('div');
-        fill.className = 'faab-fill';
-        fill.style.width = Math.max(1, (f.remaining / faabBudget) * 100) + '%';
+        fill.className = 'faab-fill' + (isEmpty ? ' is-empty' : '');
+        fill.style.width = Math.max(2, (f.remaining / faabBudget) * 100) + '%';
         track.appendChild(fill);
+        nameWrap.appendChild(nm);
+        nameWrap.appendChild(track);
+        team.appendChild(avatarEl(t || {}));
+        team.appendChild(nameWrap);
         const val = document.createElement('div');
-        val.className = 'faab-val';
+        val.className = 'score-pts faab-pts' + (isEmpty ? ' is-empty' : '');
         val.textContent = `$${f.remaining}`;
-        row.appendChild(name);
-        row.appendChild(track);
+        row.appendChild(rank);
+        row.appendChild(document.createElement('div'));
+        row.appendChild(team);
         row.appendChild(val);
         faabList.appendChild(row);
       });
