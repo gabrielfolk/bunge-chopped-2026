@@ -489,14 +489,6 @@
   .bench-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--critical) 55%, var(--surface)), var(--critical)); }
   .bench-val { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; text-align: right; color: var(--ink-muted); }
 
-  /* ---------- FAAB remaining chart (shares .scoreboard's card chrome and
-     .score-row's rank/avatar/stacked-bar layout from Live Leaderboard, with
-     its own fill color since this is a neutral season fact, not a live
-     score). ---------- */
-  .faab-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent2) 55%, var(--surface)), var(--accent2)); }
-  .faab-fill.is-empty { background: var(--critical); }
-  .faab-pts.is-empty { color: var(--critical); }
-
   /* ---------- Boom & bust ---------- */
   .boombust-grid {
     display: grid;
@@ -763,14 +755,6 @@
     <span class="note">Points quietly rotting on the sideline</span>
   </div>
   <div class="bench-list liftable" id="bench-list"></div>
-</section>
-
-<section id="sec-faab">
-  <div class="section-head">
-    <h2>FAAB Remaining</h2>
-    <span class="note" id="faab-note"></span>
-  </div>
-  <div class="scoreboard liftable" id="faab-list"></div>
 </section>
 
 <section id="sec-graveyard">
@@ -1063,7 +1047,6 @@
         scoring_type: scoringTypeFrom(league),
         trade_deadline_week: league.settings ? league.settings.trade_deadline : null,
         playoff_week_start: (league.settings && league.settings.playoff_week_start) || null,
-        waiver_budget: (league.settings && league.settings.waiver_budget) || 100,
         last_synced: new Date().toISOString(),
       },
       teams: teamsBuilt,
@@ -1882,52 +1865,6 @@
       row.appendChild(val);
       benchList.appendChild(row);
     });
-
-    // ---- FAAB remaining: each team's waiver budget left, out of the
-    // league's full season budget (not the highest remaining team — a $0
-    // team should read as fully empty, not nearly full). ----
-    const faabBudget = league.waiver_budget;
-    document.getElementById('faab-note').textContent = `$${faabBudget} budget per team to start the season`;
-    const faabList = document.getElementById('faab-list');
-    faabList.innerHTML = '';
-    teams.slice()
-      .map(t => ({ roster_id: t.roster_id, remaining: Math.max(0, faabBudget - (t.waiver_budget_used || 0)) }))
-      .sort((a, b) => b.remaining - a.remaining)
-      .forEach((f, i) => {
-        const isEmpty = f.remaining === 0;
-        const t = teamByRoster.get(f.roster_id);
-        const row = document.createElement('div');
-        row.className = 'score-row';
-        const rank = document.createElement('div');
-        rank.className = 'score-rank mono';
-        rank.textContent = i + 1;
-        const team = document.createElement('div');
-        team.className = 'score-team';
-        const nameWrap = document.createElement('div');
-        nameWrap.style.minWidth = '0';
-        nameWrap.style.flex = '1';
-        const nm = document.createElement('div');
-        nm.className = 'score-name';
-        nm.textContent = teamLabel(f.roster_id);
-        const track = document.createElement('div');
-        track.className = 'score-bar-track';
-        const fill = document.createElement('div');
-        fill.className = 'faab-fill' + (isEmpty ? ' is-empty' : '');
-        fill.style.width = Math.max(2, (f.remaining / faabBudget) * 100) + '%';
-        track.appendChild(fill);
-        nameWrap.appendChild(nm);
-        nameWrap.appendChild(track);
-        team.appendChild(avatarEl(t || {}));
-        team.appendChild(nameWrap);
-        const val = document.createElement('div');
-        val.className = 'score-pts faab-pts' + (isEmpty ? ' is-empty' : '');
-        val.textContent = `$${f.remaining}`;
-        row.appendChild(rank);
-        row.appendChild(document.createElement('div'));
-        row.appendChild(team);
-        row.appendChild(val);
-        faabList.appendChild(row);
-      });
 
     // ---- Roster picker ----
     const picker = document.getElementById('team-picker');
