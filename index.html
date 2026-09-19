@@ -801,6 +801,9 @@
   const PROJECTIONS_CACHE_PREFIX = 'bunge_projections_cache_v1';
   const STATE_CACHE_KEY = 'bunge_state_cache_v1';
   const CHOP_HISTORY_CACHE_PREFIX = 'bunge_matchups_history_v1';
+  const TXNS_HISTORY_CACHE_PREFIX = 'bunge_txns_history_v1';
+  const STATS_HISTORY_CACHE_PREFIX = 'bunge_stats_history_v1';
+  const PROJ_HISTORY_CACHE_PREFIX = 'bunge_proj_history_v1';
   const PLAYERS_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
   const PROJECTIONS_MAX_AGE_MS = 60 * 60 * 1000; // 1h — projections don't move mid-game like actual stats do
   const BOOM_BUST_MIN_PROJECTION = 2; // filter out irrelevant scrubs so the list isn't noise
@@ -810,7 +813,7 @@
   const AVATAR_COLORS = ['--avatar-a', '--avatar-b', '--avatar-c', '--avatar-d', '--avatar-e', '--avatar-f'];
   const POS_VAR = { QB: '--pos-qb', RB: '--pos-rb', WR: '--pos-wr', TE: '--pos-te', FLEX: '--pos-te' };
 
-  const state = { league: null, teams: [], players: {}, matchups: [], txns: [], projections: {}, stats: {}, chopHistory: {} };
+  const state = { league: null, teams: [], players: {}, matchups: [], txns: [], projections: {}, stats: {}, chopHistory: {}, seasonHistory: null };
   let lastFetchOk = null; // Date of last successful fetch
   let lastFetchError = null;
 
@@ -941,6 +944,77 @@
     return history;
   }
 
+  // Same reasoning as loadWeekMatchupsCached: a past week's transactions,
+  // actual stats, and projections are all final and never change once the
+  // next week starts, so cache them indefinitely too.
+  async function loadWeekTxnsCached(season, week) {
+    const cacheKey = `${TXNS_HISTORY_CACHE_PREFIX}_${season}_${week}`;
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.data) return cached.data;
+      }
+    } catch (e) { /* ignore cache errors */ }
+    const data = await fetchJSON(`${API}/league/${LEAGUE_ID}/transactions/${week}`);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ data })); } catch (e) { /* quota etc, ignore */ }
+    return data;
+  }
+
+  async function loadWeekStatsCached(season, week) {
+    const cacheKey = `${STATS_HISTORY_CACHE_PREFIX}_${season}_${week}`;
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.data) return cached.data;
+      }
+    } catch (e) { /* ignore cache errors */ }
+    const data = await fetchJSON(`${API}/stats/nfl/regular/${season}/${week}`);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ data })); } catch (e) { /* quota etc, ignore */ }
+    return data;
+  }
+
+  async function loadWeekProjectionsFinalCached(season, week) {
+    const cacheKey = `${PROJ_HISTORY_CACHE_PREFIX}_${season}_${week}`;
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.data) return cached.data;
+      }
+    } catch (e) { /* ignore cache errors */ }
+    const data = await fetchJSON(`${API}/projections/nfl/regular/${season}/${week}`);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ data })); } catch (e) { /* quota etc, ignore */ }
+    return data;
+  }
+
+  // Season-long trends (Trash Talk Stats / League Insights) need every
+  // completed week's matchups/transactions/stats/projections, not just the
+  // current week's. The current week's own copies of these are already being
+  // fetched fresh by loadLiveState, so this only covers weeks 1..currentWeek-1
+  // and leans entirely on the indefinite per-week caches above/in
+  // loadWeekMatchupsCached — after a week's data has been fetched once, every
+  // later page load (and 30s poll) just reads it back from localStorage.
+  async function loadSeasonHistory(season, currentWeek) {
+    const weeks = [];
+    for (let w = 1; w < currentWeek; w++) weeks.push(w);
+    const [matchupsByWeek, txnsByWeek, statsByWeek, projByWeek] = await Promise.all([
+      Promise.all(weeks.map(w => loadWeekMatchupsCached(season, w).then(buildMatchups).catch(() => []))),
+      Promise.all(weeks.map(w => loadWeekTxnsCached(season, w).catch(() => []))),
+      Promise.all(weeks.map(w => loadWeekStatsCached(season, w).catch(() => ({})))),
+      Promise.all(weeks.map(w => loadWeekProjectionsFinalCached(season, w).catch(() => ({})))),
+    ]);
+    const byWeek = (arr) => Object.fromEntries(weeks.map((w, i) => [w, arr[i]]));
+    return {
+      weeks,
+      matchupsByWeek: byWeek(matchupsByWeek),
+      txnsByWeek: byWeek(txnsByWeek),
+      statsByWeek: byWeek(statsByWeek),
+      projByWeek: byWeek(projByWeek),
+    };
+  }
+
   async function loadLiveState() {
     const [nflState, league, users, rosters, drafts] = await Promise.all([
       fetchJSON(`${API}/state/nfl`),
@@ -960,6 +1034,7 @@
     const draftOrder = drafts && drafts[0] ? drafts[0].draft_order : null;
     const teamsBuilt = buildTeams(users, rosters, draftOrder);
     const chopHistory = await computeChopHistory(teamsBuilt, league.season, week);
+    const seasonHistory = await loadSeasonHistory(league.season, week);
 
     return {
       league: {
@@ -981,15 +1056,16 @@
       projections: projectionsRaw || {},
       stats: statsRaw || {},
       chopHistory,
+      seasonHistory,
     };
   }
 
   function cacheState(s) {
     try {
-      // Skip caching `players`/`projections`/`stats` here — they're large and
-      // each have their own fetch/cache path already; the "last good state"
-      // fallback is meant to be a light snapshot of the rest.
-      const { players, projections, stats, ...rest } = s;
+      // Skip caching `players`/`projections`/`stats`/`seasonHistory` here —
+      // they're large and each have their own fetch/cache path already; the
+      // "last good state" fallback is meant to be a light snapshot of the rest.
+      const { players, projections, stats, seasonHistory, ...rest } = s;
       localStorage.setItem(STATE_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: rest }));
     } catch (e) { /* ignore */ }
   }
@@ -1193,7 +1269,7 @@
   }
 
   function render() {
-    const { league, teams, matchups, txns, chopHistory } = state;
+    const { league, teams, matchups, txns, chopHistory, seasonHistory } = state;
     if (!league) return; // nothing loaded yet
     const teamByRoster = new Map(teams.map(t => [t.roster_id, t]));
     const matchupByRoster = new Map(matchups.map(m => [m.roster_id, m]));
@@ -1421,6 +1497,62 @@
       projOnlyRows.sort((a, b) => b.projPts - a.projPts);
     }
 
+    // ---- Season-wide history: combine every completed week (from
+    // seasonHistory) with the current week's already-loaded live data, so
+    // Trash Talk Stats / League Insights can show season trends instead of
+    // just a single-week snapshot. Rosters are treated as fixed at their
+    // current composition for the whole season — a simplification (like
+    // computeChopHistory's replay above), since Sleeper doesn't expose
+    // historical who-owned-whom, only who owns a player right now. ----
+    const historyWeeks = (seasonHistory && seasonHistory.weeks) || [];
+    const allWeekNumbers = historyWeeks.concat([league.current_week]);
+    const allWeeksMatchups = historyWeeks.map(w => seasonHistory.matchupsByWeek[w] || []).concat([matchups]);
+    const allWeeksTxns = historyWeeks.map(w => seasonHistory.txnsByWeek[w] || []).concat([txns]);
+    const allWeeksStatsProj = historyWeeks
+      .map(w => ({ stats: seasonHistory.statsByWeek[w] || {}, proj: seasonHistory.projByWeek[w] || {} }))
+      .concat([{ stats: state.stats, proj: state.projections }]);
+
+    // Season total bench points left on the table per team.
+    const benchSeasonByRoster = new Map();
+    allWeeksMatchups.forEach(weekMatchups => {
+      weekMatchups.forEach(m => {
+        const totalPlayed = Object.values(m.players_points || {}).reduce((a, b) => a + b, 0);
+        const bench = Math.max(0, totalPlayed - m.points);
+        benchSeasonByRoster.set(m.roster_id, (benchSeasonByRoster.get(m.roster_id) || 0) + bench);
+      });
+    });
+
+    // Season transaction totals + full move history per team (the weekly
+    // txnCountByRoster below only covers the current week).
+    const txnSeasonCountByRoster = new Map();
+    const txnSeasonMovesByRoster = new Map();
+    allWeekNumbers.forEach((wk, i) => {
+      allWeeksTxns[i].forEach(tx => {
+        (tx.roster_ids || []).forEach(rid => {
+          txnSeasonCountByRoster.set(rid, (txnSeasonCountByRoster.get(rid) || 0) + 1);
+          if (!txnSeasonMovesByRoster.has(rid)) txnSeasonMovesByRoster.set(rid, []);
+          txnSeasonMovesByRoster.get(rid).push({ tx, week: wk });
+        });
+      });
+    });
+
+    // Season cumulative actual-vs-projection delta per rostered player.
+    const boomBustSeasonByPid = new Map();
+    allWeeksStatsProj.forEach(({ stats: wkStats, proj: wkProj }) => {
+      rosteredIds.forEach(pid => {
+        const proj = wkProj[pid];
+        const actual = wkStats[pid];
+        if (!proj || !actual || proj.pts_ppr == null || actual.pts_ppr == null || proj.pts_ppr < BOOM_BUST_MIN_PROJECTION) return;
+        const entry = boomBustSeasonByPid.get(pid) || { deltaSum: 0, weeks: 0 };
+        entry.deltaSum += actual.pts_ppr - proj.pts_ppr;
+        entry.weeks += 1;
+        boomBustSeasonByPid.set(pid, entry);
+      });
+    });
+    const boomBustSeasonRows = Array.from(boomBustSeasonByPid.entries())
+      .map(([pid, e]) => ({ pid, ...e, owners: teams.filter(t => t.players.includes(pid)).map(t => t.team_name || t.display_name) }))
+      .sort((a, b) => a.deltaSum - b.deltaSum);
+
     // ---- Stat tiles: Trash Talk Stats — blunders & mess-ups only ----
     const statGrid = document.getElementById('stat-grid');
     statGrid.innerHTML = '';
@@ -1483,6 +1615,55 @@
       });
     }
 
+    // ---- The three tiles below only kick in once at least one full week is
+    // in the books (historyWeeks.length > 0) — before that there's no season
+    // history to speak of yet, just the current week's numbers above. ----
+    if (historyWeeks.length) {
+      const benchSeasonSorted = Array.from(benchSeasonByRoster.entries()).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      if (benchSeasonSorted.length) {
+        tiles.push({
+          eyebrow: 'Bench Graveyard',
+          headline: teamLabel(benchSeasonSorted[0][0]),
+          detail: `${fmt(benchSeasonSorted[0][1])} points left on the bench across weeks 1–${league.current_week} — season-long roster mismanagement`,
+          rows: benchSeasonSorted.map(([rid, v]) => ({ label: teamLabel(rid), value: fmt(v) })),
+          emptyMessage: 'No bench points wasted yet this season.',
+        });
+      }
+
+      let txnSeasonLeaderRid = null, txnSeasonMax = 0;
+      txnSeasonCountByRoster.forEach((v, k) => { if (v > txnSeasonMax) { txnSeasonMax = v; txnSeasonLeaderRid = k; } });
+      if (txnSeasonLeaderRid != null) {
+        tiles.push({
+          eyebrow: 'Trigger Finger — Season',
+          headline: teamLabel(txnSeasonLeaderRid),
+          detail: `${txnSeasonMax} roster move${txnSeasonMax === 1 ? '' : 's'} across weeks 1–${league.current_week} — can't leave the roster alone`,
+          rows: Array.from(txnSeasonCountByRoster.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 8)
+            .map(([rid, count]) => ({
+              label: teamLabel(rid),
+              value: `${count} move${count === 1 ? '' : 's'}`,
+              moves: (txnSeasonMovesByRoster.get(rid) || [])
+                .sort((a, b) => (b.tx.created || 0) - (a.tx.created || 0))
+                .map(({ tx, week }) => `Week ${week} — ${describeTransactionForRoster(tx, rid)}`),
+            })),
+          emptyMessage: "Nobody's touched their roster all season. Bold strategy.",
+        });
+      }
+
+      if (boomBustSeasonRows.length && boomBustSeasonRows[0].deltaSum < 0) {
+        const worst = boomBustSeasonRows[0];
+        const info = playerLabel(worst.pid);
+        tiles.push({
+          eyebrow: 'Cursed All Season',
+          headline: worst.owners[0] || 'Free agent',
+          detail: `${info.name} is ${fmt(Math.abs(worst.deltaSum))} points under projection across ${worst.weeks} week${worst.weeks === 1 ? '' : 's'} this season`,
+          rows: boomBustSeasonRows.slice(0, 8).map(r => ({ label: `${playerLabel(r.pid).name} (${r.owners[0] || 'Free agent'})`, value: `${r.deltaSum > 0 ? '+' : ''}${fmt(r.deltaSum)}` })),
+          emptyMessage: 'No season-long bust data yet.',
+        });
+      }
+    }
+
     renderStatCards(statGrid, tiles, 'stat');
 
     // ---- League Insights ----
@@ -1515,18 +1696,22 @@
       emptyMessage: 'Every roster is spread across different NFL teams — no bye-week risk yet.',
     });
 
+    // Season-cumulative (not just this week) — a much steadier signal for
+    // "which position group is actually carrying the league."
     const posTotals = new Map();
-    matchups.forEach(m => {
-      Object.entries(m.players_points || {}).forEach(([pid, pts]) => {
-        const pos = state.players[pid] && state.players[pid].position;
-        if (['QB', 'RB', 'WR', 'TE'].includes(pos)) posTotals.set(pos, (posTotals.get(pos) || 0) + pts);
+    allWeeksMatchups.forEach(weekMatchups => {
+      weekMatchups.forEach(m => {
+        Object.entries(m.players_points || {}).forEach(([pid, pts]) => {
+          const pos = state.players[pid] && state.players[pid].position;
+          if (['QB', 'RB', 'WR', 'TE'].includes(pos)) posTotals.set(pos, (posTotals.get(pos) || 0) + pts);
+        });
       });
     });
     const posSorted = Array.from(posTotals.entries()).sort((a, b) => b[1] - a[1]);
     insightTiles.push({
       eyebrow: 'Position Power Rankings',
       headline: posSorted[0] ? `${posSorted[0][0]}s are carrying the league` : '—',
-      detail: posSorted[0] ? `${fmt(posSorted[0][1])} combined points scored by ${posSorted[0][0]}s this week` : 'no scoring yet',
+      detail: posSorted[0] ? `${fmt(posSorted[0][1])} combined points scored by ${posSorted[0][0]}s this season (weeks 1–${league.current_week})` : 'no scoring yet',
       rows: posSorted.map(([pos, pts]) => ({ label: pos, value: fmt(pts) })),
     });
 
@@ -1829,6 +2014,7 @@
     state.projections = data.projections || {};
     state.stats = data.stats || {};
     state.chopHistory = data.chopHistory || {};
+    state.seasonHistory = data.seasonHistory || { weeks: [], matchupsByWeek: {}, txnsByWeek: {}, statsByWeek: {}, projByWeek: {} };
   }
 
   async function refresh() {
