@@ -1876,32 +1876,35 @@
       }
     }
 
-    // Squeaked By: this is a chop league, not head-to-head, so there's no
-    // such thing as "schedule luck" — every roster's wins/losses sit at 0-0
-    // here since Sleeper only tracks that for head-to-head formats. What
-    // actually matters is how close anyone's come to being the lowest
-    // scorer: the tightest gap, in any week, between the team that got
-    // chopped (or would have) and the team just above them. chopHistory
-    // tells us who was already out by a given week, so they're excluded
-    // from that week's comparison. Before live scoring starts this week,
-    // that week's comparison falls back to projected team totals instead of
-    // skipping it — reverts to real points automatically once live scoring
-    // starts.
-    {
-      const weeklyGaps = [];
-      allWeekNumbers.forEach((wk, i) => {
-        const wm = allWeeksMatchups[i].filter(m => {
-          const ch = chopHistory[m.roster_id];
-          return !ch || ch.week >= wk;
-        });
-        if (wm.length < 2) return;
-        const useProjected = wk === league.current_week && !isLiveThisWeek;
-        const ranked = useProjected
-          ? wm.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) })).sort((a, b) => a.points - b.points)
-          : wm.slice().sort((a, b) => a.points - b.points);
-        weeklyGaps.push({ week: wk, gap: ranked[1].points - ranked[0].points, bottom: ranked[0], safe: ranked[1], projected: useProjected });
+    // Shared: each week's full ranking (highest points first) among teams
+    // still alive that week — chopHistory excludes anyone already chopped by
+    // then, and the current week falls back to projected team totals before
+    // live scoring starts (reverts automatically once it does). Powers
+    // Squeaked By, Living Dangerously, and Top Dog below — all three read
+    // the season through the same "every week is its own elimination
+    // battle" lens instead of treating it like a head-to-head standings race.
+    const weeklyRankings = allWeekNumbers.map((wk, i) => {
+      const wm = allWeeksMatchups[i].filter(m => {
+        const ch = chopHistory[m.roster_id];
+        return !ch || ch.week >= wk;
       });
-      weeklyGaps.sort((a, b) => a.gap - b.gap);
+      const useProjected = wk === league.current_week && !isLiveThisWeek;
+      const ranked = useProjected
+        ? wm.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) })).sort((a, b) => b.points - a.points)
+        : wm.slice().sort((a, b) => b.points - a.points);
+      return { week: wk, ranked, projected: useProjected };
+    }).filter(r => r.ranked.length >= 2);
+
+    // Squeaked By: this is a chop league, not head-to-head, so there's no
+    // such thing as "schedule luck". What actually matters is how close
+    // anyone's come to being the lowest scorer: the tightest gap, in any
+    // week, between the team that got chopped (or would have) and the team
+    // just above them.
+    {
+      const weeklyGaps = weeklyRankings.map(({ week, ranked, projected }) => {
+        const n = ranked.length;
+        return { week, gap: ranked[n - 2].points - ranked[n - 1].points, bottom: ranked[n - 1], safe: ranked[n - 2], projected };
+      }).sort((a, b) => a.gap - b.gap);
       if (weeklyGaps.length) {
         const closest = weeklyGaps[0];
         insightTiles.push({
@@ -1909,6 +1912,51 @@
           headline: teamLabel(closest.safe.roster_id),
           detail: `${closest.projected ? 'Projected to stay' : 'Stayed'} off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
           rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}${g.projected ? ' (proj)' : ''}`, value: fmt(g.gap) })),
+        });
+      }
+    }
+
+    // Living Dangerously: teams that keep finishing 2nd- or 3rd-lowest each
+    // week — they survive, but they're not far off. The bottom slot itself
+    // isn't counted here since in a completed week that's just whoever
+    // actually got chopped (already the Graveyard's story); this is about
+    // everyone who's repeatedly lived on the edge without going over it.
+    {
+      const dangerCounts = new Map();
+      weeklyRankings.filter(r => r.ranked.length >= 3).forEach(({ ranked }) => {
+        const n = ranked.length;
+        [ranked[n - 2], ranked[n - 3]].forEach(m => {
+          dangerCounts.set(m.roster_id, (dangerCounts.get(m.roster_id) || 0) + 1);
+        });
+      });
+      const dangerSorted = Array.from(dangerCounts.entries()).sort((a, b) => b[1] - a[1]);
+      if (dangerSorted.length && dangerSorted[0][1] >= 2) {
+        insightTiles.push({
+          eyebrow: 'Living Dangerously',
+          headline: teamLabel(dangerSorted[0][0]),
+          detail: `${dangerSorted[0][1]} weeks finishing in the bottom 3 without getting chopped — living on borrowed time`,
+          rows: dangerSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}` })),
+        });
+      }
+    }
+
+    // Top Dog: the chop-league complement to Squeaked By/Living Dangerously
+    // — instead of who's closest to the bottom, who's posted the week's
+    // single highest score the most times.
+    {
+      const winCounts = new Map();
+      let anyProjected = false;
+      weeklyRankings.forEach(({ ranked, projected }) => {
+        winCounts.set(ranked[0].roster_id, (winCounts.get(ranked[0].roster_id) || 0) + 1);
+        if (projected) anyProjected = true;
+      });
+      const winSorted = Array.from(winCounts.entries()).sort((a, b) => b[1] - a[1]);
+      if (winSorted.length) {
+        insightTiles.push({
+          eyebrow: 'Top Dog',
+          headline: teamLabel(winSorted[0][0]),
+          detail: `${winSorted[0][1]} week${winSorted[0][1] === 1 ? '' : 's'} with the league's highest score this season${anyProjected ? ' (current week projected)' : ''}`,
+          rows: winSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}` })),
         });
       }
     }
