@@ -239,7 +239,7 @@
   }
   #sec-chop { grid-column: span 4; display: flex; flex-direction: column; }
   #sec-stats { grid-column: span 8; }
-  #sec-insights, #sec-boombust, #sec-bench, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
+  #sec-strategy, #sec-insights, #sec-boombust, #sec-bench, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
     grid-column: span 12;
   }
   .chop-card { flex: 1; box-sizing: border-box; }
@@ -729,6 +729,14 @@
     <span class="note">Blunders &amp; mess-ups, fetched live from Sleeper</span>
   </div>
   <div class="stat-grid" id="stat-grid"></div>
+</section>
+
+<section id="sec-strategy">
+  <div class="section-head">
+    <h2>Strategy</h2>
+    <span class="note">Actionable stuff — what to actually do about your roster</span>
+  </div>
+  <div class="stat-grid" id="strategy-grid"></div>
 </section>
 
 <section id="sec-insights">
@@ -1684,11 +1692,14 @@
 
     renderStatCards(statGrid, tiles, 'stat');
 
-    // ---- League Insights ----
-    const insightsGrid = document.getElementById('insights-grid');
-    const insightTiles = [];
+    // ---- Strategy: the subset of insights that are actually actionable —
+    // things a workmate should do something about (bench someone, work the
+    // waiver wire, plan around a bye week) rather than just fun trivia.
+    // Split out from League Insights below so the two don't blur together. ----
+    const strategyGrid = document.getElementById('strategy-grid');
+    const strategyTiles = [];
 
-    insightTiles.push({
+    strategyTiles.push({
       eyebrow: 'Lineup Landmines',
       headline: `${landmines.length} starter${landmines.length === 1 ? '' : 's'}`,
       detail: landmines.length ? 'currently locked into the lineup and guaranteed a zero' : 'nobody has started a player ruled out this week',
@@ -1706,13 +1717,67 @@
       counts.forEach((v, k) => { if (v > topCount) { topCount = v; topTeam = k; } });
       return { rid: t.roster_id, topTeam, topCount };
     }).filter(s => s.topCount >= 2).sort((a, b) => b.topCount - a.topCount);
-    insightTiles.push({
+    strategyTiles.push({
       eyebrow: 'Bye Week Landmines',
       headline: stackRows[0] ? teamLabel(stackRows[0].rid) : 'None yet',
       detail: stackRows[0] ? `${stackRows[0].topCount} players from ${stackRows[0].topTeam} — one bye week wipes out the roster` : 'no team has stacked one NFL team',
       rows: stackRows.map(s => ({ label: teamLabel(s.rid), value: `${s.topCount} on ${s.topTeam}` })),
       emptyMessage: 'Every roster is spread across different NFL teams — no bye-week risk yet.',
     });
+
+    // Walking Wounded: whole-roster injury count (not just starters), so it
+    // catches teams hoarding hurt players on the bench too.
+    {
+      const ANY_INJURY = new Set(['Questionable', 'Doubtful', 'Out', 'IR', 'PUP', 'NA']);
+      const injuryCountByRoster = new Map();
+      teams.forEach(t => {
+        let count = 0;
+        t.players.forEach(pid => {
+          const p = state.players[pid];
+          if (!p) return;
+          if (p.status === 'Inactive' || ANY_INJURY.has(p.injury_status)) count++;
+        });
+        injuryCountByRoster.set(t.roster_id, count);
+      });
+      const worst = Array.from(injuryCountByRoster.entries()).sort((a, b) => b[1] - a[1])[0];
+      if (worst && worst[1] >= 3) {
+        strategyTiles.push({
+          eyebrow: 'Walking Wounded',
+          headline: teamLabel(worst[0]),
+          detail: `${worst[1]} rostered players carrying an injury designation right now`,
+          rows: Array.from(injuryCountByRoster.entries()).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} flagged` })),
+        });
+      }
+    }
+
+    // Rookie Reliance: teams leaning hard on true rookies in their lineup.
+    {
+      const rookieCounts = new Map();
+      teams.forEach(t => {
+        let count = 0;
+        t.starters.forEach(pid => {
+          const p = state.players[pid];
+          if (p && p.years_exp === 0) count++;
+        });
+        rookieCounts.set(t.roster_id, count);
+      });
+      const top = Array.from(rookieCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+      if (top && top[1] >= 2) {
+        strategyTiles.push({
+          eyebrow: 'Rookie Reliance',
+          headline: teamLabel(top[0]),
+          detail: `Starting ${top[1]} true rookies this week — living dangerously`,
+          rows: Array.from(rookieCounts.entries()).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} rookie${c === 1 ? '' : 's'}` })),
+        });
+      }
+    }
+
+    renderStatCards(strategyGrid, strategyTiles, 'strategy');
+
+    // ---- League Insights: everything else — fun, narrative, backward-
+    // looking patterns that aren't really a decision to make right now. ----
+    const insightsGrid = document.getElementById('insights-grid');
+    const insightTiles = [];
 
     // Season-cumulative (not just this week) — a much steadier signal for
     // "which position group is actually carrying the league." Before live
@@ -1792,31 +1857,6 @@
       }
     }
 
-    // Walking Wounded: whole-roster injury count (not just starters), so it
-    // catches teams hoarding hurt players on the bench too.
-    {
-      const ANY_INJURY = new Set(['Questionable', 'Doubtful', 'Out', 'IR', 'PUP', 'NA']);
-      const injuryCountByRoster = new Map();
-      teams.forEach(t => {
-        let count = 0;
-        t.players.forEach(pid => {
-          const p = state.players[pid];
-          if (!p) return;
-          if (p.status === 'Inactive' || ANY_INJURY.has(p.injury_status)) count++;
-        });
-        injuryCountByRoster.set(t.roster_id, count);
-      });
-      const worst = Array.from(injuryCountByRoster.entries()).sort((a, b) => b[1] - a[1])[0];
-      if (worst && worst[1] >= 3) {
-        insightTiles.push({
-          eyebrow: 'Walking Wounded',
-          headline: teamLabel(worst[0]),
-          detail: `${worst[1]} rostered players carrying an injury designation right now`,
-          rows: Array.from(injuryCountByRoster.entries()).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} flagged` })),
-        });
-      }
-    }
-
     // Set It and Forget It: fewest roster moves all season, while the league
     // as a whole has clearly been active. Uses the real per-week transaction
     // counts (txnSeasonCountByRoster) rather than Sleeper's
@@ -1869,28 +1909,6 @@
           headline: teamLabel(closest.safe.roster_id),
           detail: `${closest.projected ? 'Projected to stay' : 'Stayed'} off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
           rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}${g.projected ? ' (proj)' : ''}`, value: fmt(g.gap) })),
-        });
-      }
-    }
-
-    // Rookie Reliance: teams leaning hard on true rookies in their lineup.
-    {
-      const rookieCounts = new Map();
-      teams.forEach(t => {
-        let count = 0;
-        t.starters.forEach(pid => {
-          const p = state.players[pid];
-          if (p && p.years_exp === 0) count++;
-        });
-        rookieCounts.set(t.roster_id, count);
-      });
-      const top = Array.from(rookieCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-      if (top && top[1] >= 2) {
-        insightTiles.push({
-          eyebrow: 'Rookie Reliance',
-          headline: teamLabel(top[0]),
-          detail: `Starting ${top[1]} true rookies this week — living dangerously`,
-          rows: Array.from(rookieCounts.entries()).filter(([, c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} rookie${c === 1 ? '' : 's'}` })),
         });
       }
     }
