@@ -1297,6 +1297,12 @@
     if (!league) return; // nothing loaded yet
     const teamByRoster = new Map(teams.map(t => [t.roster_id, t]));
     const matchupByRoster = new Map(matchups.map(m => [m.roster_id, m]));
+    // Shared by Chopping Block, and by the projected fallbacks further down
+    // in Trash Talk / League Insights that kick in before live scoring starts.
+    const teamProjTotal = t => (t.starters || []).reduce((sum, pid) => {
+      const proj = state.projections[pid];
+      return sum + (proj && proj.pts_ppr != null ? proj.pts_ppr : 0);
+    }, 0);
 
     document.getElementById('league-name').textContent = league.name;
     document.getElementById('league-sub').textContent =
@@ -1320,10 +1326,6 @@
       return !t || !t.eliminated;
     });
     if (activeMatchups.length) {
-      const teamProjTotal = t => (t.starters || []).reduce((sum, pid) => {
-        const proj = state.projections[pid];
-        return sum + (proj && proj.pts_ppr != null ? proj.pts_ppr : 0);
-      }, 0);
       const scored = activeMatchups.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) }));
       const byPointsAsc = scored.slice().sort((a, b) => a.points - b.points);
       const featured = byPointsAsc[0];
@@ -1459,6 +1461,19 @@
       return { roster_id: m.roster_id, bench };
     }).sort((a, b) => b.bench - a.bench);
 
+    // Projected version of the same thing (whole roster's projected points
+    // minus the starting lineup's), used as a Trash Talk fallback before any
+    // actual stats exist this week — reverts to the real benchData above
+    // automatically once live scoring starts.
+    const rosterProjTotal = t => (t.players || []).reduce((sum, pid) => {
+      const proj = state.projections[pid];
+      return sum + (proj && proj.pts_ppr != null ? proj.pts_ppr : 0);
+    }, 0);
+    const projBenchData = teams.map(t => ({
+      roster_id: t.roster_id,
+      bench: Math.max(0, rosterProjTotal(t) - teamProjTotal(t)),
+    })).sort((a, b) => b.bench - a.bench);
+
     const UNAVAILABLE_STATUS = new Set(['Out', 'Doubtful', 'IR', 'PUP', 'NA']);
     const landmines = [];
     const landmineCountByRoster = new Map();
@@ -1582,6 +1597,19 @@
         rows: worstBustRows.slice(0, 8).map(r => ({ label: `${playerLabel(r.pid).name} (${r.owners[0] || 'Free agent'})`, value: `${r.delta > 0 ? '+' : ''}${fmt(r.delta)}` })),
         emptyMessage: 'No projections available yet.',
       });
+    } else if (projOnlyRows.length) {
+      // No live stats yet this week — nothing's "busted" for real, so surface
+      // the lowest-projected rostered player instead. Reverts to the real
+      // bust view above automatically once any actual stats come in.
+      const lowest = projOnlyRows[projOnlyRows.length - 1];
+      const info = playerLabel(lowest.pid);
+      tiles.push({
+        eyebrow: 'Biggest Bust (Projected)',
+        headline: lowest.owners[0] || 'Free agent',
+        detail: `${info.name} projected for just ${fmt(lowest.projPts)} points — lowest projection in the league, before kickoff`,
+        rows: projOnlyRows.slice().reverse().slice(0, 8).map(r => ({ label: `${playerLabel(r.pid).name} (${r.owners[0] || 'Free agent'})`, value: fmt(r.projPts) })),
+        emptyMessage: 'No projections available yet.',
+      });
     }
     if (benchData[0] && benchData[0].bench > 0) {
       const worstBench = benchData[0];
@@ -1591,6 +1619,18 @@
         detail: `${fmt(worstBench.bench)} points rotting on the bench this week — brutal lineup call`,
         rows: benchData.filter(b => b.bench > 0).slice(0, 8).map(b => ({ label: teamLabel(b.roster_id), value: fmt(b.bench) })),
         emptyMessage: 'No bench points wasted yet.',
+      });
+    } else if (projBenchData[0] && projBenchData[0].bench > 0) {
+      // Same fallback logic — before kickoff every actual bench total is 0,
+      // so project it instead: full roster's projected points minus the
+      // starting lineup's.
+      const worstBench = projBenchData[0];
+      tiles.push({
+        eyebrow: 'Benched a Fortune (Projected)',
+        headline: teamLabel(worstBench.roster_id),
+        detail: `${fmt(worstBench.bench)} points projected to sit on the bench this week, before kickoff`,
+        rows: projBenchData.filter(b => b.bench > 0).slice(0, 8).map(b => ({ label: teamLabel(b.roster_id), value: fmt(b.bench) })),
+        emptyMessage: 'No bench points projected to be wasted this week.',
       });
     }
     // ---- The two tiles below only kick in once at least one full week is
@@ -1654,9 +1694,25 @@
     });
 
     // Season-cumulative (not just this week) — a much steadier signal for
-    // "which position group is actually carrying the league."
+    // "which position group is actually carrying the league." Before live
+    // scoring starts this week, actual points are all 0, so that week's
+    // contribution falls back to projected points instead — reverts to real
+    // actual points automatically once any live scoring comes in.
+    const isLiveThisWeek = matchups.some(m => m.points > 0);
     const posTotals = new Map();
-    allWeeksMatchups.forEach(weekMatchups => {
+    allWeeksMatchups.forEach((weekMatchups, wi) => {
+      if (wi === allWeeksMatchups.length - 1 && !isLiveThisWeek) {
+        teams.forEach(t => {
+          (t.players || []).forEach(pid => {
+            const pos = state.players[pid] && state.players[pid].position;
+            const proj = state.projections[pid];
+            if (['QB', 'RB', 'WR', 'TE'].includes(pos) && proj && proj.pts_ppr != null) {
+              posTotals.set(pos, (posTotals.get(pos) || 0) + proj.pts_ppr);
+            }
+          });
+        });
+        return;
+      }
       weekMatchups.forEach(m => {
         Object.entries(m.players_points || {}).forEach(([pid, pts]) => {
           const pos = state.players[pid] && state.players[pid].position;
@@ -1668,7 +1724,7 @@
     insightTiles.push({
       eyebrow: 'Position Power Rankings',
       headline: posSorted[0] ? `${posSorted[0][0]}s are carrying the league` : '—',
-      detail: posSorted[0] ? `${fmt(posSorted[0][1])} combined points scored by ${posSorted[0][0]}s this season (weeks 1–${league.current_week})` : 'no scoring yet',
+      detail: posSorted[0] ? `${fmt(posSorted[0][1])} combined points by ${posSorted[0][0]}s this season (weeks 1–${league.current_week}${isLiveThisWeek ? '' : ', this week projected'})` : 'no scoring yet',
       rows: posSorted.map(([pos, pts]) => ({ label: pos, value: fmt(pts) })),
     });
 
@@ -1677,23 +1733,39 @@
     // scores move — instead of the same fixed set every time. ----
 
     // One-Man Team: a starter carrying more than half their team's points.
+    // Before live scoring starts, fall back to projected shares — reverts to
+    // the real live version automatically once any scoring comes in.
     {
-      let bestRid = null, bestPid = null, bestShare = 0, bestPts = 0, bestTotal = 0;
-      matchups.forEach(m => {
-        if (!m.points) return;
-        const starterSet = new Set(m.starters || []);
-        Object.entries(m.players_points || {}).forEach(([pid, pts]) => {
-          if (!starterSet.has(pid)) return;
-          const share = pts / m.points;
-          if (share > bestShare) { bestShare = share; bestRid = m.roster_id; bestPid = pid; bestPts = pts; bestTotal = m.points; }
+      let bestRid = null, bestPid = null, bestShare = 0, bestPts = 0, bestTotal = 0, isProjected = false;
+      if (isLiveThisWeek) {
+        matchups.forEach(m => {
+          if (!m.points) return;
+          const starterSet = new Set(m.starters || []);
+          Object.entries(m.players_points || {}).forEach(([pid, pts]) => {
+            if (!starterSet.has(pid)) return;
+            const share = pts / m.points;
+            if (share > bestShare) { bestShare = share; bestRid = m.roster_id; bestPid = pid; bestPts = pts; bestTotal = m.points; }
+          });
         });
-      });
+      } else {
+        isProjected = true;
+        teams.forEach(t => {
+          const total = teamProjTotal(t);
+          if (!total) return;
+          (t.starters || []).forEach(pid => {
+            const proj = state.projections[pid];
+            const pts = proj && proj.pts_ppr != null ? proj.pts_ppr : 0;
+            const share = pts / total;
+            if (share > bestShare) { bestShare = share; bestRid = t.roster_id; bestPid = pid; bestPts = pts; bestTotal = total; }
+          });
+        });
+      }
       if (bestRid != null && bestShare >= 0.5) {
         const info = playerLabel(bestPid);
         insightTiles.push({
-          eyebrow: 'One-Man Team',
+          eyebrow: isProjected ? 'One-Man Team (Projected)' : 'One-Man Team',
           headline: teamLabel(bestRid),
-          detail: `${info.name} alone is ${Math.round(bestShare * 100)}% of their ${fmt(bestTotal)} points this week`,
+          detail: `${info.name} ${isProjected ? 'is projected for' : 'alone is'} ${Math.round(bestShare * 100)}% of their ${fmt(bestTotal)} ${isProjected ? 'projected ' : ''}points this week`,
           rows: [{ label: info.name, value: `${fmt(bestPts)} of ${fmt(bestTotal)}` }],
         });
       }
@@ -1750,7 +1822,10 @@
     // scorer: the tightest gap, in any week, between the team that got
     // chopped (or would have) and the team just above them. chopHistory
     // tells us who was already out by a given week, so they're excluded
-    // from that week's comparison.
+    // from that week's comparison. Before live scoring starts this week,
+    // that week's comparison falls back to projected team totals instead of
+    // skipping it — reverts to real points automatically once live scoring
+    // starts.
     {
       const weeklyGaps = [];
       allWeekNumbers.forEach((wk, i) => {
@@ -1758,19 +1833,21 @@
           const ch = chopHistory[m.roster_id];
           return !ch || ch.week >= wk;
         });
-        if (wk === league.current_week && !wm.some(m => m.points > 0)) return; // no live scores yet this week
         if (wm.length < 2) return;
-        const ranked = wm.slice().sort((a, b) => a.points - b.points);
-        weeklyGaps.push({ week: wk, gap: ranked[1].points - ranked[0].points, bottom: ranked[0], safe: ranked[1] });
+        const useProjected = wk === league.current_week && !isLiveThisWeek;
+        const ranked = useProjected
+          ? wm.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) })).sort((a, b) => a.points - b.points)
+          : wm.slice().sort((a, b) => a.points - b.points);
+        weeklyGaps.push({ week: wk, gap: ranked[1].points - ranked[0].points, bottom: ranked[0], safe: ranked[1], projected: useProjected });
       });
       weeklyGaps.sort((a, b) => a.gap - b.gap);
       if (weeklyGaps.length) {
         const closest = weeklyGaps[0];
         insightTiles.push({
-          eyebrow: 'Squeaked By',
+          eyebrow: closest.projected ? 'Squeaked By (Projected)' : 'Squeaked By',
           headline: teamLabel(closest.safe.roster_id),
-          detail: `Stayed off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
-          rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}`, value: fmt(g.gap) })),
+          detail: `${closest.projected ? 'Projected to stay' : 'Stayed'} off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
+          rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}${g.projected ? ' (proj)' : ''}`, value: fmt(g.gap) })),
         });
       }
     }
