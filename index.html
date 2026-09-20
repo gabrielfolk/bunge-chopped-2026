@@ -1899,7 +1899,7 @@
     faabList.innerHTML = '';
     teams.slice()
       .map(t => ({ roster_id: t.roster_id, remaining: Math.max(0, faabBudget - (t.waiver_budget_used || 0)) }))
-      .sort((a, b) => b.remaining - a.remaining)
+      .sort((a, b) => a.remaining - b.remaining)
       .forEach(f => {
         const row = document.createElement('div');
         row.className = 'faab-row';
