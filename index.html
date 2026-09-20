@@ -1334,8 +1334,10 @@
     }, 0);
 
     document.getElementById('league-name').textContent = league.name;
+    const chopCount = teams.filter(t => t.eliminated).length;
+    const remainingCount = league.total_rosters - chopCount;
     document.getElementById('league-sub').textContent =
-      `Season ${league.season} · Week ${league.current_week} · ${league.total_rosters} teams · ${league.scoring_type}`;
+      `Season ${league.season} · Week ${league.current_week} · ${remainingCount} remaining, ${chopCount} chopped · ${league.scoring_type}`;
     document.getElementById('footer-sync').textContent = league.last_synced
       ? `Last synced ${new Date(league.last_synced).toLocaleString()}`
       : '';
