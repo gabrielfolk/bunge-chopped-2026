@@ -489,6 +489,21 @@
   .bench-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--critical) 55%, var(--surface)), var(--critical)); }
   .bench-val { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; text-align: right; color: var(--ink-muted); }
 
+  /* ---------- FAAB remaining chart (shares .bench-list's card chrome) ---------- */
+  .faab-row {
+    display: grid;
+    grid-template-columns: 140px 1fr 56px;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .faab-row:last-child { border-bottom: none; }
+  .faab-row .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .faab-track { height: 9px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .faab-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent2) 55%, var(--surface)), var(--accent2)); }
+  .faab-val { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; text-align: right; color: var(--ink-muted); }
+
   /* ---------- Boom & bust ---------- */
   .boombust-grid {
     display: grid;
@@ -1875,10 +1890,9 @@
       benchList.appendChild(row);
     });
 
-    // ---- FAAB remaining: same look as Bench Points Left on the Table
-    // (shared .bench-row/-track/-fill/-val classes), just with FAAB data.
-    // Bar width is out of the league's full season budget, not the highest
-    // remaining team — a $0 team should read as fully empty, not nearly full. ----
+    // ---- FAAB remaining: each team's waiver budget left, out of the
+    // league's full season budget (not the highest remaining team — a $0
+    // team should read as fully empty, not nearly full). ----
     const faabBudget = league.waiver_budget;
     document.getElementById('faab-note').textContent = `$${faabBudget} budget per team to start the season`;
     const faabList = document.getElementById('faab-list');
@@ -1888,18 +1902,18 @@
       .sort((a, b) => b.remaining - a.remaining)
       .forEach(f => {
         const row = document.createElement('div');
-        row.className = 'bench-row';
+        row.className = 'faab-row';
         const name = document.createElement('div');
         name.className = 'name';
         name.textContent = teamLabel(f.roster_id);
         const track = document.createElement('div');
-        track.className = 'bench-track';
+        track.className = 'faab-track';
         const fill = document.createElement('div');
-        fill.className = 'bench-fill';
+        fill.className = 'faab-fill';
         fill.style.width = Math.max(1, (f.remaining / faabBudget) * 100) + '%';
         track.appendChild(fill);
         const val = document.createElement('div');
-        val.className = 'bench-val';
+        val.className = 'faab-val';
         val.textContent = `$${f.remaining}`;
         row.appendChild(name);
         row.appendChild(track);
