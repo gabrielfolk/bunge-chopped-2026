@@ -827,6 +827,7 @@
   const TXNS_HISTORY_CACHE_PREFIX = 'bunge_txns_history_v1';
   const STATS_HISTORY_CACHE_PREFIX = 'bunge_stats_history_v1';
   const PROJ_HISTORY_CACHE_PREFIX = 'bunge_proj_history_v1';
+  const DRAFT_PICKS_CACHE_PREFIX = 'bunge_draft_picks_v1';
   const PLAYERS_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
   const PROJECTIONS_MAX_AGE_MS = 60 * 60 * 1000; // 1h — projections don't move mid-game like actual stats do
   const BOOM_BUST_MIN_PROJECTION = 2; // filter out irrelevant scrubs so the list isn't noise
@@ -836,7 +837,7 @@
   const AVATAR_COLORS = ['--avatar-a', '--avatar-b', '--avatar-c', '--avatar-d', '--avatar-e', '--avatar-f'];
   const POS_VAR = { QB: '--pos-qb', RB: '--pos-rb', WR: '--pos-wr', TE: '--pos-te', FLEX: '--pos-te' };
 
-  const state = { league: null, teams: [], players: {}, matchups: [], txns: [], projections: {}, stats: {}, chopHistory: {}, seasonHistory: null };
+  const state = { league: null, teams: [], players: {}, matchups: [], txns: [], projections: {}, stats: {}, chopHistory: {}, seasonHistory: null, draftPicks: [] };
   let lastFetchOk = null; // Date of last successful fetch
   let lastFetchError = null;
 
@@ -1038,6 +1039,24 @@
     };
   }
 
+  // Every pick from the draft, with round/pick_no/player/roster — fixed
+  // once the draft ends, so cache it indefinitely like the other historical
+  // data above. Powers the Draft Grades insight (value vs. draft slot).
+  async function loadDraftPicksCached(draftId) {
+    if (!draftId) return [];
+    const cacheKey = `${DRAFT_PICKS_CACHE_PREFIX}_${draftId}`;
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.data) return cached.data;
+      }
+    } catch (e) { /* ignore cache errors */ }
+    const data = await fetchJSON(`${API}/draft/${draftId}/picks`);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ data })); } catch (e) { /* quota etc, ignore */ }
+    return data;
+  }
+
   async function loadLiveState() {
     const [nflState, league, users, rosters, drafts] = await Promise.all([
       fetchJSON(`${API}/state/nfl`),
@@ -1058,6 +1077,7 @@
     const teamsBuilt = buildTeams(users, rosters, draftOrder);
     const chopHistory = await computeChopHistory(teamsBuilt, league.season, week);
     const seasonHistory = await loadSeasonHistory(league.season, week);
+    const draftPicks = await loadDraftPicksCached(drafts && drafts[0] ? drafts[0].draft_id : null);
 
     return {
       league: {
@@ -1081,15 +1101,16 @@
       stats: statsRaw || {},
       chopHistory,
       seasonHistory,
+      draftPicks: draftPicks || [],
     };
   }
 
   function cacheState(s) {
     try {
-      // Skip caching `players`/`projections`/`stats`/`seasonHistory` here —
-      // they're large and each have their own fetch/cache path already; the
-      // "last good state" fallback is meant to be a light snapshot of the rest.
-      const { players, projections, stats, seasonHistory, ...rest } = s;
+      // Skip caching `players`/`projections`/`stats`/`seasonHistory`/`draftPicks`
+      // here — they're large and each have their own fetch/cache path already;
+      // the "last good state" fallback is meant to be a light snapshot of the rest.
+      const { players, projections, stats, seasonHistory, draftPicks, ...rest } = s;
       localStorage.setItem(STATE_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: rest }));
     } catch (e) { /* ignore */ }
   }
@@ -1293,7 +1314,7 @@
   }
 
   function render() {
-    const { league, teams, matchups, txns, chopHistory, seasonHistory } = state;
+    const { league, teams, matchups, txns, chopHistory, seasonHistory, draftPicks } = state;
     if (!league) return; // nothing loaded yet
     const teamByRoster = new Map(teams.map(t => [t.roster_id, t]));
     const matchupByRoster = new Map(matchups.map(m => [m.roster_id, m]));
@@ -1874,6 +1895,94 @@
       }
     }
 
+    // Draft Grades: compare each drafted player's season points so far
+    // against their draft slot — Sleeper's full draft pick data (round,
+    // pick number, player) isn't used anywhere else on this page. "Value"
+    // is pick number minus season scoring rank among all drafted players:
+    // a big positive gap is a steal (drafted late, producing early), a big
+    // negative gap is a bust (drafted early, producing late). Before any
+    // actual stats exist at all, this naturally falls back to being a pure
+    // projections comparison, same as everywhere else on this page.
+    if (draftPicks && draftPicks.length) {
+      const seasonPtsFor = (pid) => {
+        let total = 0;
+        allWeeksStatsProj.forEach(({ stats: wkStats, proj: wkProj }, i) => {
+          const isCurrent = i === allWeeksStatsProj.length - 1;
+          const source = (isCurrent && !isLiveThisWeek) ? wkProj : wkStats;
+          const s = source[pid];
+          if (s && s.pts_ppr != null) total += s.pts_ppr;
+        });
+        return total;
+      };
+      const draftRows = draftPicks
+        .filter(p => p.player_id)
+        .map(p => ({ pid: p.player_id, pickNo: p.pick_no, round: p.round, rosterId: p.roster_id, pts: seasonPtsFor(p.player_id) }));
+      if (draftRows.length) {
+        const byPts = draftRows.slice().sort((a, b) => b.pts - a.pts);
+        const finishRank = new Map(byPts.map((r, i) => [r.pid, i + 1]));
+        const valued = draftRows.map(r => ({ ...r, finishRank: finishRank.get(r.pid), valueGap: r.pickNo - finishRank.get(r.pid) }));
+        const steal = valued.slice().sort((a, b) => b.valueGap - a.valueGap)[0];
+        const bust = valued.slice().sort((a, b) => a.valueGap - b.valueGap)[0];
+        const rowFor = r => ({
+          label: `${playerLabel(r.pid).name} — Pick ${r.pickNo} (Rd ${r.round}), ${teamLabel(r.rosterId)}`,
+          value: `${r.valueGap > 0 ? '+' : ''}${r.valueGap} (${fmt(r.pts)} pts)`,
+        });
+        insightTiles.push({
+          eyebrow: (isLiveThisWeek || historyWeeks.length) ? 'Draft Grades' : 'Draft Grades (Projected)',
+          headline: `Steal: ${playerLabel(steal.pid).name}`,
+          detail: `Picked ${steal.pickNo} overall (Round ${steal.round}) by ${teamLabel(steal.rosterId)}, now the #${steal.finishRank} scorer among all drafted players with ${fmt(steal.pts)} points. Biggest bust: ${playerLabel(bust.pid).name}, picked ${bust.pickNo} (Round ${bust.round}) by ${teamLabel(bust.rosterId)}, only #${bust.finishRank} in scoring so far.`,
+          rows: [
+            ...valued.slice().sort((a, b) => b.valueGap - a.valueGap).slice(0, 4).map(rowFor),
+            ...valued.slice().sort((a, b) => a.valueGap - b.valueGap).slice(0, 4).map(rowFor),
+          ],
+        });
+      }
+    }
+
+    // Grizzled Veterans: average roster age extremes, using player
+    // biographical data (age) already in the players dataset but otherwise
+    // unused on this page.
+    {
+      const ageByRoster = teams.map(t => {
+        const ages = (t.players || []).map(pid => state.players[pid] && state.players[pid].age).filter(a => a != null);
+        const avg = ages.length ? ages.reduce((a, b) => a + b, 0) / ages.length : null;
+        return { roster_id: t.roster_id, avg };
+      }).filter(r => r.avg != null);
+      if (ageByRoster.length) {
+        const byAge = ageByRoster.slice().sort((a, b) => b.avg - a.avg);
+        const oldest = byAge[0], youngest = byAge[byAge.length - 1];
+        insightTiles.push({
+          eyebrow: 'Grizzled Veterans',
+          headline: teamLabel(oldest.roster_id),
+          detail: `Oldest roster in the league at ${oldest.avg.toFixed(1)} years average — ${teamLabel(youngest.roster_id)} is the youngest at ${youngest.avg.toFixed(1)}`,
+          rows: byAge.map(r => ({ label: teamLabel(r.roster_id), value: `${r.avg.toFixed(1)} yrs` })),
+        });
+      }
+    }
+
+    // Alma Mater: a roster stacked with players from the same college —
+    // pure trivia, only surfaced when it's actually notable (3+ players).
+    {
+      const collegeStacks = teams.map(t => {
+        const counts = new Map();
+        (t.players || []).forEach(pid => {
+          const college = state.players[pid] && state.players[pid].college;
+          if (college) counts.set(college, (counts.get(college) || 0) + 1);
+        });
+        let topCollege = null, topCount = 0;
+        counts.forEach((v, k) => { if (v > topCount) { topCount = v; topCollege = k; } });
+        return { roster_id: t.roster_id, topCollege, topCount };
+      }).filter(s => s.topCount >= 3).sort((a, b) => b.topCount - a.topCount);
+      if (collegeStacks.length) {
+        insightTiles.push({
+          eyebrow: 'Alma Mater',
+          headline: `${collegeStacks[0].topCount} players from ${collegeStacks[0].topCollege}`,
+          detail: `${teamLabel(collegeStacks[0].roster_id)} is running a mini ${collegeStacks[0].topCollege} reunion`,
+          rows: collegeStacks.map(s => ({ label: teamLabel(s.roster_id), value: `${s.topCount} from ${s.topCollege}` })),
+        });
+      }
+    }
+
     renderStatCards(insightsGrid, insightTiles, 'insight');
 
     // ---- Boom & bust: rostered players whose actual points this week are
@@ -2061,6 +2170,7 @@
     state.stats = data.stats || {};
     state.chopHistory = data.chopHistory || {};
     state.seasonHistory = data.seasonHistory || { weeks: [], matchupsByWeek: {}, txnsByWeek: {}, statsByWeek: {}, projByWeek: {} };
+    state.draftPicks = data.draftPicks || [];
   }
 
   async function refresh() {
