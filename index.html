@@ -1709,6 +1709,16 @@
       emptyMessage: 'Every starting lineup is clean this week.',
     });
 
+    // 2026 NFL bye weeks (Sleeper has no bye endpoint; derived from the
+    // published schedule). Keys use Sleeper's team abbreviations.
+    const BYE_WEEKS = {
+      ARI: 14, ATL: 11, BAL: 13, BUF: 7, CAR: 5, CHI: 10, CIN: 6, CLE: 11,
+      DAL: 14, DEN: 10, DET: 6, GB: 11, HOU: 8, IND: 13, JAX: 7, KC: 5,
+      LAC: 7, LAR: 11, LV: 13, MIA: 6, MIN: 6, NE: 11, NO: 8, NYG: 8,
+      NYJ: 13, PHI: 10, PIT: 9, SEA: 11, SF: 8, TB: 10, TEN: 9, WAS: 7,
+    };
+    const byeLabel = nfl => BYE_WEEKS[nfl] ? ` (Wk ${BYE_WEEKS[nfl]} bye)` : '';
+
     const stackRows = teams.map(t => {
       const counts = new Map();
       t.players.forEach(pid => {
@@ -1722,8 +1732,8 @@
     strategyTiles.push({
       eyebrow: 'Bye Week Landmines',
       headline: stackRows[0] ? teamLabel(stackRows[0].rid) : 'None yet',
-      detail: stackRows[0] ? `${stackRows[0].topCount} players from ${stackRows[0].topTeam} — one bye week wipes out the roster` : 'no team has stacked one NFL team',
-      rows: stackRows.map(s => ({ label: teamLabel(s.rid), value: `${s.topCount} on ${s.topTeam}` })),
+      detail: stackRows[0] ? `${stackRows[0].topCount} players from ${stackRows[0].topTeam}${byeLabel(stackRows[0].topTeam)} — one bye week wipes out the roster` : 'no team has stacked one NFL team',
+      rows: stackRows.map(s => ({ label: teamLabel(s.rid), value: `${s.topCount} on ${s.topTeam}${byeLabel(s.topTeam)}` })),
       emptyMessage: 'Every roster is spread across different NFL teams — no bye-week risk yet.',
     });
 
