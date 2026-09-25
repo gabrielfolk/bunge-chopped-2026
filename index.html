@@ -242,7 +242,16 @@
   #sec-strategy, #sec-insights, #sec-boombust, #sec-bench, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
     grid-column: span 12;
   }
-  .chop-card { flex: 1; box-sizing: border-box; }
+  .chop-card { box-sizing: border-box; }
+  .chop-wrap { position: relative; z-index: 2; }
+  .chop-wrap.is-expanded { z-index: 25; }
+  .danger-head { margin-top: 22px; }
+  .danger-head[hidden] { display: none; }
+  .danger-head h2 { font-size: 18px; }
+  .danger-grid { grid-template-columns: 1fr; gap: 10px; }
+  .danger-grid .stat-tile { padding: 14px 18px; gap: 4px; }
+  .danger-grid .stat-tile .eyebrow { color: var(--critical); }
+  .danger-grid .stat-tile .headline { font-size: 20px; }
   @media (max-width: 860px) {
     #sec-chop, #sec-stats { grid-column: span 12; }
   }
@@ -444,6 +453,7 @@
     padding: 4px 0 10px;
     margin-bottom: 2px;
     border-bottom: 1px solid var(--border);
+    white-space: pre-line;
   }
   .stat-detail-row-btn {
     all: unset;
@@ -702,6 +712,26 @@
     font-variant-numeric: tabular-nums;
   }
   .chop-note { font-size: 11px; color: #e2b6a8; }
+  .chop-toggle {
+    all: unset;
+    cursor: pointer;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 155, 122, 0.45);
+    background: rgba(255, 120, 80, 0.12);
+    color: #ffd4c4;
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .chop-toggle:hover { background: rgba(255, 120, 80, 0.22); }
+  .chop-toggle:focus-visible { outline: 2px solid #ff9b7a; outline-offset: 2px; }
+  .chop-toggle .chevron-sm { color: #ffb199; }
+  .chop-toggle[aria-expanded="true"] .chevron-sm { transform: rotate(180deg); }
   @media (max-width: 520px) {
     .chop-card { padding: 20px 22px; gap: 16px; }
     .chop-visual { width: 80px; height: 80px; }
@@ -728,7 +758,15 @@
     <h2>On the Chopping Block</h2>
     <span class="note" id="chop-note">This week's low score</span>
   </div>
-  <div class="chop-card liftable" id="chop-card"></div>
+  <div class="chop-wrap" id="chop-wrap">
+    <div class="chop-card liftable" id="chop-card"></div>
+    <div class="stat-detail" id="chop-detail" hidden></div>
+  </div>
+  <div class="section-head danger-head" id="danger-head" hidden>
+    <h2>Danger Zone</h2>
+    <span class="note">Next closest to the chop · tap for how to get out</span>
+  </div>
+  <div class="stat-grid danger-grid" id="danger-grid"></div>
 </section>
 
 <section id="sec-stats">
@@ -1229,6 +1267,50 @@
     }[c]));
   }
 
+  // The expandable panel under a stat tile (also reused by the Chopping
+  // Block card): optional explainer, then rows, some with sub-rows.
+  function fillDetailPanel(panel, t) {
+    panel.innerHTML = '';
+    if (t.info) {
+      const info = document.createElement('div');
+      info.className = 'stat-detail-info';
+      info.textContent = t.info;
+      panel.appendChild(info);
+    }
+    if (t.rows && t.rows.length) {
+      t.rows.forEach(r => {
+        if (r.moves && r.moves.length) {
+          const rowBtn = document.createElement('button');
+          rowBtn.type = 'button';
+          rowBtn.className = 'stat-detail-row stat-detail-row-btn';
+          rowBtn.setAttribute('aria-expanded', 'false');
+          rowBtn.innerHTML = `<span class="label">${esc(r.label)}</span><span class="value mono">${esc(r.value)}<svg class="chevron-sm" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
+          const sub = document.createElement('div');
+          sub.className = 'stat-detail-sub';
+          sub.hidden = true;
+          sub.innerHTML = r.moves.map(mv => `<div class="stat-detail-sub-row">${esc(mv)}</div>`).join('');
+          rowBtn.addEventListener('click', () => {
+            const expanded = rowBtn.getAttribute('aria-expanded') === 'true';
+            rowBtn.setAttribute('aria-expanded', String(!expanded));
+            sub.hidden = expanded;
+          });
+          panel.appendChild(rowBtn);
+          panel.appendChild(sub);
+        } else {
+          const row = document.createElement('div');
+          row.className = 'stat-detail-row';
+          row.innerHTML = `<span class="label">${esc(r.label)}</span><span class="value mono">${esc(r.value)}</span>`;
+          panel.appendChild(row);
+        }
+      });
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'stat-detail-empty';
+      empty.textContent = t.emptyMessage || 'No further detail for this stat.';
+      panel.appendChild(empty);
+    }
+  }
+
   function renderStatCards(container, tiles, idPrefix) {
     container.innerHTML = '';
     tiles.forEach((t, i) => {
@@ -1254,44 +1336,7 @@
       panel.className = 'stat-detail';
       panel.id = `${idPrefix}-detail-${i}`;
       panel.hidden = true;
-      if (t.info) {
-        const info = document.createElement('div');
-        info.className = 'stat-detail-info';
-        info.textContent = t.info;
-        panel.appendChild(info);
-      }
-      if (t.rows && t.rows.length) {
-        t.rows.forEach(r => {
-          if (r.moves && r.moves.length) {
-            const rowBtn = document.createElement('button');
-            rowBtn.type = 'button';
-            rowBtn.className = 'stat-detail-row stat-detail-row-btn';
-            rowBtn.setAttribute('aria-expanded', 'false');
-            rowBtn.innerHTML = `<span class="label">${esc(r.label)}</span><span class="value mono">${esc(r.value)}<svg class="chevron-sm" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
-            const sub = document.createElement('div');
-            sub.className = 'stat-detail-sub';
-            sub.hidden = true;
-            sub.innerHTML = r.moves.map(mv => `<div class="stat-detail-sub-row">${esc(mv)}</div>`).join('');
-            rowBtn.addEventListener('click', () => {
-              const expanded = rowBtn.getAttribute('aria-expanded') === 'true';
-              rowBtn.setAttribute('aria-expanded', String(!expanded));
-              sub.hidden = expanded;
-            });
-            panel.appendChild(rowBtn);
-            panel.appendChild(sub);
-          } else {
-            const row = document.createElement('div');
-            row.className = 'stat-detail-row';
-            row.innerHTML = `<span class="label">${esc(r.label)}</span><span class="value mono">${esc(r.value)}</span>`;
-            panel.appendChild(row);
-          }
-        });
-      } else {
-        const empty = document.createElement('div');
-        empty.className = 'stat-detail-empty';
-        empty.textContent = t.emptyMessage || 'No further detail for this stat.';
-        panel.appendChild(empty);
-      }
+      fillDetailPanel(panel, t);
 
       btn.addEventListener('click', () => {
         const expanded = btn.getAttribute('aria-expanded') === 'true';
@@ -1365,48 +1410,13 @@
       ? `Last synced ${new Date(league.last_synced).toLocaleString()}`
       : '';
 
-    // ---- Chopping block: a single forecast, always based on projected
-    // points, not live actual points — mid-week, live totals are misleading
-    // noise (teams whose games haven't kicked off yet all sit at 0, which
-    // used to produce a card "tied" between half the league). The Live
-    // Leaderboard section below is where real-time actual scores belong;
-    // this card always shows exactly one team: the projected lowest scorer
-    // among teams still alive (already-chopped teams live in the Graveyard
-    // now, not here). ----
-    const chopCard = document.getElementById('chop-card');
-    const chopNote = document.getElementById('chop-note');
+    // Teams still alive this week — the Live Leaderboard below ranks these.
+    // (The Chopping Block / Danger Zone render further down, once Chop Risk
+    // has been computed.)
     const activeMatchups = matchups.filter(m => {
       const t = teamByRoster.get(m.roster_id);
       return !t || !t.eliminated;
     });
-    if (activeMatchups.length) {
-      const scored = activeMatchups.map(m => ({ roster_id: m.roster_id, points: teamProjTotal(teamByRoster.get(m.roster_id) || {}) }));
-      const byPointsAsc = scored.slice().sort((a, b) => a.points - b.points);
-      const featured = byPointsAsc[0];
-      const featuredTeam = teamByRoster.get(featured.roster_id) || {};
-      const nextUp = byPointsAsc.find(m => m.points > featured.points);
-      const margin = nextUp ? nextUp.points - featured.points : null;
-
-      chopNote.textContent = `Week ${league.current_week} · lowest projected score`;
-      chopCard.innerHTML = `
-        <div class="chop-visual">${CHOP_SVG}</div>
-        <div class="chop-info">
-          <div class="chop-tag">☠️ On the Chopping Block (Projected)</div>
-          <div class="chop-team"></div>
-          <div class="chop-pts">${fmt(featured.points)} projected points</div>
-          <div class="chop-note"></div>
-        </div>`;
-      const teamCell = chopCard.querySelector('.chop-team');
-      teamCell.appendChild(avatarEl(featuredTeam));
-      const nameEl = document.createElement('div');
-      nameEl.className = 'chop-name';
-      nameEl.textContent = featuredTeam.team_name || featuredTeam.display_name || `Roster ${featured.roster_id}`;
-      teamCell.appendChild(nameEl);
-      const noteEl = chopCard.querySelector('.chop-note');
-      noteEl.textContent = margin != null ? `Just ${fmt(margin)} points behind on paper` : '';
-    } else {
-      chopCard.innerHTML = '';
-    }
 
     // ---- Live leaderboard: it's a chop league (lowest score each week is
     // out), not head-to-head, so this is always a ranked leaderboard — no
@@ -1579,20 +1589,21 @@
     const matchupPids = m => (m.players && m.players.length ? m.players : Object.keys(m.players_points || {}));
     // Which benched players should have started, and whom they'd replace —
     // shown as the expandable sub-rows under each team.
-    function lineupSwaps(m, ptsOf, picks, isProj) {
+    function lineupSwapPairs(m, ptsOf, picks) {
       const starterSet = new Set(m.starters);
       const shouldStart = Array.from(picks).filter(pid => !starterSet.has(pid)).sort((a, b) => ptsOf(b) - ptsOf(a));
       const shouldSit = m.starters.filter(pid => pid && pid !== '0' && !picks.has(pid)).sort((a, b) => ptsOf(a) - ptsOf(b));
-      const ptsLabel = pid => `${fmt(ptsOf(pid))}${isProj(pid) ? ' proj' : ''}`;
-      return shouldStart.map(pid => {
+      return shouldStart.map(inPid => {
         // Pair with a benchable starter at the same position when there is
         // one, otherwise whoever's worst (a flex swap).
-        let i = shouldSit.findIndex(o => posOf(o) === posOf(pid));
+        let i = shouldSit.findIndex(o => posOf(o) === posOf(inPid));
         if (i < 0) i = 0;
-        const out = shouldSit.splice(i, 1)[0];
-        return `Start ${playerLabel(pid).name} (${ptsLabel(pid)}) over ${out ? `${playerLabel(out).name} (${ptsLabel(out)})` : 'an empty slot'}`;
+        const outPid = shouldSit.splice(i, 1)[0] || null;
+        return { inPid, outPid, gain: ptsOf(inPid) - (outPid ? ptsOf(outPid) : 0) };
       });
     }
+    const currentPtsLabel = (ptsOf, pid) => `${fmt(ptsOf(pid))}${hasPlayed(state.stats, pid) ? '' : ' proj'}`;
+    const swapText = (ptsOf, sw) => `Start ${playerLabel(sw.inPid).name} (${currentPtsLabel(ptsOf, sw.inPid)}) over ${sw.outPid ? `${playerLabel(sw.outPid).name} (${currentPtsLabel(ptsOf, sw.outPid)})` : 'an empty slot'}`;
 
     // Completed weeks: actual points, exact.
     const lineupGapsByWeek = completedWeeks.map(({ week, matchups: wm }) => ({
@@ -1617,10 +1628,13 @@
       const ptsOf = currentPtsOf(m);
       const opt = optimalLineup(matchupPids(m), ptsOf);
       const setTotal = m.starters.reduce((s, pid) => s + ptsOf(pid), 0);
+      const pairs = lineupSwapPairs(m, ptsOf, opt.picks);
       return {
         roster_id: m.roster_id,
         gap: Math.max(0, opt.total - setTotal),
-        swaps: lineupSwaps(m, ptsOf, opt.picks, pid => !hasPlayed(state.stats, pid)),
+        pairs,
+        ptsOf,
+        swaps: pairs.map(sw => swapText(ptsOf, sw)),
       };
     }).sort((a, b) => b.gap - a.gap);
 
@@ -1789,6 +1803,8 @@
     const strategyGrid = document.getElementById('strategy-grid');
     const strategyTiles = [];
 
+    let chopRiskRows = [];
+    let chopRiskBaseSd = null, chopRiskFromLeague = false;
     // Chop Risk: each alive team's probability of posting the week's lowest
     // score. Each team's score is modeled as Normal(mean, sd): mean = actual
     // points already banked + projections for starters yet to play; sd = the
@@ -1809,15 +1825,16 @@
         ? Math.sqrt(residuals.reduce((s, r) => s + r * r, 0) / residuals.length)
         : DEFAULT_SD;
       const dists = matchups.filter(m => aliveIds.has(m.roster_id)).map(m => {
-        let banked = 0, remainingProj = 0, fullProj = 0;
+        let banked = 0, remainingProj = 0, fullProj = 0, toPlay = 0;
         m.starters.forEach(pid => {
+          if (!pid || pid === '0') return;
           const pp = projOf(state.projections, pid);
           fullProj += pp;
           if (hasPlayed(state.stats, pid)) banked += (m.players_points || {})[pid] || 0;
-          else remainingProj += pp;
+          else { remainingProj += pp; toPlay += 1; }
         });
         const share = fullProj > 0 ? remainingProj / fullProj : 1;
-        return { roster_id: m.roster_id, mu: banked + remainingProj, sd: Math.max(1, baseSd * Math.sqrt(share)) };
+        return { roster_id: m.roster_id, mu: banked + remainingProj, sd: Math.max(1, baseSd * Math.sqrt(share)), banked, toPlay };
       });
       if (dists.length >= 2) {
         const erf = x => {
@@ -1840,6 +1857,9 @@
         }
         const totalRisk = risk.reduce((a, b) => a + b, 0) || 1;
         const riskRows = dists.map((d, i) => ({ ...d, p: risk[i] / totalRisk })).sort((a, b) => b.p - a.p);
+        chopRiskRows = riskRows;
+        chopRiskBaseSd = baseSd;
+        chopRiskFromLeague = residuals.length >= 10;
         const top = riskRows[0];
         strategyTiles.push({
           eyebrow: 'Chop Risk',
@@ -1941,10 +1961,10 @@
 
     // Best Available: the highest-projected unrostered players this week,
     // and how many teams' weakest starter at that position they'd beat.
+    const fas = [];
     {
       const SKILL = new Set(['QB', 'RB', 'WR', 'TE']);
       const HURT = new Set(['Out', 'IR', 'PUP', 'NA', 'Sus', 'Doubtful']);
-      const fas = [];
       Object.entries(state.players).forEach(([pid, p]) => {
         if (rosteredIds.has(pid) || !p || !SKILL.has(p.position) || !p.team || HURT.has(p.injury_status)) return;
         const pp = projOf(state.projections, pid);
@@ -1974,6 +1994,184 @@
     }
 
     renderStatCards(strategyGrid, strategyTiles, 'strategy');
+
+    // ---- Chopping Block + Danger Zone: the team with the highest Chop Risk,
+    // then the next three. Same model as the Chop Risk tile (banked points +
+    // projections for starters yet to play), so a Thursday-night score counts
+    // but a Sunday starter isn't treated as a 0. Each one expands into why
+    // they're there and a concrete, point-valued escape plan. ----
+    const posAvgProj = new Map();
+    {
+      const byPos = new Map();
+      matchups.filter(m => aliveIds.has(m.roster_id)).forEach(m => m.starters.forEach(pid => {
+        const pos = posOf(pid);
+        if (!pos) return;
+        if (!byPos.has(pos)) byPos.set(pos, []);
+        byPos.get(pos).push(projOf(state.projections, pid));
+      }));
+      byPos.forEach((v, pos) => posAvgProj.set(pos, v.reduce((a, b) => a + b, 0) / v.length));
+    }
+    const byMuAsc = chopRiskRows.slice().sort((a, b) => a.mu - b.mu);
+    const allLocked = chopRiskRows.every(r => r.toPlay === 0);
+
+    function escapePlan(r) {
+      const m = matchupByRoster.get(r.roster_id);
+      const g = currentGaps.find(x => x.roster_id === r.roster_id);
+      const rank = byMuAsc.findIndex(x => x.roster_id === r.roster_id) + 1; // 1 = lowest
+      const above = byMuAsc[rank]; // next team up
+      const bottom = byMuAsc[0];
+      const starters = m.starters.filter(pid => pid && pid !== '0');
+      const unplayed = pid => !hasPlayed(state.stats, pid);
+
+      // Why: dead starters and the weakest spots vs. the average starter at
+      // that position this week.
+      const dead = landmines.filter(l => l.rid === r.roster_id);
+      const weakSpots = starters.filter(unplayed).map(pid => ({ pid, pos: posOf(pid), proj: projOf(state.projections, pid) }))
+        .filter(s => posAvgProj.has(s.pos))
+        .map(s => ({ ...s, vsAvg: s.proj - posAvgProj.get(s.pos) }))
+        .filter(s => s.vsAvg < 0)
+        .sort((a, b) => a.vsAvg - b.vsAvg)
+        .slice(0, 3);
+
+      // How to get out, part 1: start/sit fixes still possible (both players
+      // yet to play — anyone who's played is locked).
+      const fixes = g ? g.pairs.filter(sw => sw.gain > 0.1 && unplayed(sw.inPid) && (!sw.outPid || unplayed(sw.outPid))) : [];
+      const fixGain = fixes.reduce((s, sw) => s + sw.gain, 0);
+
+      // Part 2: waiver/free-agent adds that out-project an unplayed starter
+      // at the same position (after the lineup fixes above), best gains
+      // first, each free agent used once.
+      const benched = new Set(fixes.map(sw => sw.outPid));
+      const lineupAfterFixes = starters.filter(pid => !benched.has(pid)).concat(fixes.map(sw => sw.inPid));
+      const usedFa = new Set();
+      const adds = [];
+      lineupAfterFixes.filter(unplayed).map(pid => ({ pid, pos: posOf(pid), proj: projOf(state.projections, pid) }))
+        .map(s => {
+          const fa = fas.filter(f => f.pos === s.pos && unplayed(f.pid) && f.proj > s.proj + 0.5).sort((a, b) => b.proj - a.proj);
+          return { s, fa };
+        })
+        .filter(x => x.fa.length)
+        .sort((a, b) => (b.fa[0].proj - b.s.proj) - (a.fa[0].proj - a.s.proj))
+        .forEach(({ s, fa }) => {
+          const pick = fa.find(f => !usedFa.has(f.pid));
+          if (!pick || adds.length >= 3) return;
+          usedFa.add(pick.pid);
+          adds.push({ add: pick, drop: s, gain: pick.proj - s.proj });
+        });
+      const addGain = adds.reduce((s, a) => s + a.gain, 0);
+
+      const newMu = r.mu + fixGain + addGain;
+      const others = byMuAsc.filter(x => x.roster_id !== r.roster_id);
+      const newRank = 1 + others.filter(x => x.mu < newMu).length;
+      const cushion = rank === 1 ? null : r.mu - bottom.mu;
+      const zCushion = cushion != null ? cushion / Math.sqrt(r.sd ** 2 + bottom.sd ** 2) : null;
+
+      // The why/how summary, as the panel's explainer.
+      const whyParts = [];
+      if (rank === 1) whyParts.push(`Lowest ${anyPlayedThisWeek ? 'live + projected' : 'projected'} score among the ${byMuAsc.length} teams left${above ? `, ${fmt(above.mu - r.mu)} behind ${teamLabel(above.roster_id)}` : ''}.`);
+      else whyParts.push(`#${rank} lowest of ${byMuAsc.length}, only ${fmt(cushion)} points (${zCushion.toFixed(1)} standard deviations) above ${teamLabel(bottom.roster_id)} at the bottom.`);
+      if (dead.length) whyParts.push(`${dead.length} starter${dead.length === 1 ? '' : 's'} can't score.`);
+      if (weakSpots.length) whyParts.push(`Weakest spot: ${playerLabel(weakSpots[0].pid).name} (${weakSpots[0].pos}), ${fmt(Math.abs(weakSpots[0].vsAvg))} below the average starting ${weakSpots[0].pos}.`);
+      let how;
+      if (r.toPlay === 0) how = 'Locked in: every starter has played, so nothing left to change this week.';
+      else if (fixGain + addGain < 0.5) how = rank === 1
+        ? 'No clear upgrade on paper. The bottom team needs variance, so in close start/sit calls pick the higher-ceiling player (a deep-threat WR, a TD-dependent RB). A safe floor only locks in last place.'
+        : 'Lineup is already the best available on paper. With a cushion, lower the risk: in close calls start the steadier, higher-floor player.';
+      else if (rank === 1) how = newRank > 1
+        ? `Making the moves below projects ${fmt(newMu)} (+${fmt(fixGain + addGain)}), enough to climb past ${newRank - 1} team${newRank - 1 === 1 ? '' : 's'}. On top of that, pick higher-ceiling players in close calls. The bottom team needs variance.`
+        : `The moves below add ${fmt(fixGain + addGain)} but still project lowest. Make them, then pick higher-ceiling players in close calls. The bottom team needs variance.`;
+      else how = `The moves below add ${fmt(fixGain + addGain)}${newRank > rank ? `, moving them from #${rank} to #${newRank} lowest` : `, widening the cushion to ${fmt(newMu - bottom.mu)}`}. With a cushion, lower the risk: in close calls start the steadier, higher-floor player.`;
+
+      const rows = [
+        { label: 'Chop risk', value: `${r.p < 0.005 ? '<1%' : pct(r.p)} · #${rank} lowest of ${byMuAsc.length}` },
+        { label: anyPlayedThisWeek ? 'Live + projected score' : 'Projected score', value: `${fmt(r.mu)} ± ${fmt(r.sd)}` },
+      ];
+      if (anyPlayedThisWeek) rows.push({ label: 'Already banked', value: `${fmt(r.banked)} · ${r.toPlay} of ${starters.length} starters left` });
+      rows.push(rank === 1
+        ? { label: 'Gap to safety', value: above ? `${fmt(above.mu - r.mu)} behind ${teamLabel(above.roster_id)}` : '—' }
+        : { label: 'Cushion over the bottom', value: `+${fmt(cushion)} over ${teamLabel(bottom.roster_id)}` });
+      if (dead.length) rows.push({ label: "Starters who can't score", value: `${dead.length}`, moves: dead.map(d => `${d.player} (${d.flag}) — bench him`) });
+      if (weakSpots.length) rows.push({
+        label: 'Weakest spots',
+        value: `${weakSpots.length} below avg`,
+        moves: weakSpots.map(w => `${playerLabel(w.pid).name} (${w.pos}): ${fmt(w.proj)} proj vs ${fmt(posAvgProj.get(w.pos))} for the avg starting ${w.pos}`),
+      });
+      rows.push(fixes.length
+        ? { label: 'Lineup fixes', value: `+${fmt(fixGain)}`, moves: fixes.map(sw => `${swapText(g.ptsOf, sw)}: +${fmt(sw.gain)}`) }
+        : { label: 'Lineup fixes', value: 'none needed' });
+      rows.push(adds.length
+        ? {
+          label: 'Waiver / free-agent adds',
+          value: `+${fmt(addGain)}`,
+          moves: adds.map(a => `Add ${playerLabel(a.add.pid).name} (${a.add.pos}, ${playerLabel(a.add.pid).team}, ${fmt(a.add.proj)} proj) for ${playerLabel(a.drop.pid).name} (${fmt(a.drop.proj)} proj): +${fmt(a.gain)}`),
+        }
+        : { label: 'Waiver / free-agent adds', value: 'no upgrade available' });
+      if (fixGain + addGain >= 0.5) rows.push({ label: 'After every move', value: `${fmt(newMu)} · #${newRank} lowest` });
+
+      return {
+        info: `Why: ${whyParts.join(' ')}\n\nHow to get out: ${how}${adds.length ? ' Free-agent adds only work for players not stuck on waivers; check Sleeper for claim timing.' : ''}`,
+        rows,
+      };
+    }
+
+    const chopCard = document.getElementById('chop-card');
+    const chopNote = document.getElementById('chop-note');
+    const chopWrap = document.getElementById('chop-wrap');
+    const chopDetail = document.getElementById('chop-detail');
+    if (chopRiskRows.length) {
+      const featured = chopRiskRows[0];
+      const featuredTeam = teamByRoster.get(featured.roster_id) || {};
+      const rank1 = byMuAsc[0].roster_id === featured.roster_id;
+      const nextUp = byMuAsc[1];
+      chopNote.textContent = `Week ${league.current_week} · highest chop risk`;
+      const wasOpen = chopWrap.classList.contains('is-expanded');
+      chopCard.innerHTML = `
+        <div class="chop-visual">${CHOP_SVG}</div>
+        <div class="chop-info">
+          <div class="chop-tag">☠️ On the Chopping Block${anyPlayedThisWeek ? ' (Live)' : ' (Projected)'}</div>
+          <div class="chop-team"></div>
+          <div class="chop-pts">${fmt(featured.mu)} ${allLocked ? 'final' : (anyPlayedThisWeek ? 'live + projected' : 'projected')} points · ${pct(featured.p)} chop risk</div>
+          <div class="chop-note"></div>
+          <button type="button" class="chop-toggle" aria-controls="chop-detail" aria-expanded="${wasOpen}">Why &amp; how to escape
+            <svg class="chevron-sm" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>`;
+      const teamCell = chopCard.querySelector('.chop-team');
+      teamCell.appendChild(avatarEl(featuredTeam));
+      const nameEl = document.createElement('div');
+      nameEl.className = 'chop-name';
+      nameEl.textContent = featuredTeam.team_name || featuredTeam.display_name || `Roster ${featured.roster_id}`;
+      teamCell.appendChild(nameEl);
+      chopCard.querySelector('.chop-note').textContent = rank1 && nextUp
+        ? `Just ${fmt(nextUp.mu - featured.mu)} points behind ${teamLabel(nextUp.roster_id)}`
+        : '';
+      fillDetailPanel(chopDetail, escapePlan(featured));
+      chopDetail.hidden = !wasOpen;
+      const toggle = chopCard.querySelector('.chop-toggle');
+      toggle.addEventListener('click', () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        chopDetail.hidden = expanded;
+        chopWrap.classList.toggle('is-expanded', !expanded);
+      });
+    } else {
+      chopCard.innerHTML = '';
+      chopDetail.hidden = true;
+    }
+
+    const dangerTiles = chopRiskRows.slice(1, 4).map((r, i) => {
+      const plan = escapePlan(r);
+      const cushion = r.mu - byMuAsc[0].mu;
+      return {
+        eyebrow: `Danger Zone #${i + 1} · ${r.p < 0.005 ? '<1%' : pct(r.p)} chop risk`,
+        headline: teamLabel(r.roster_id),
+        detail: `${fmt(r.mu)} ${anyPlayedThisWeek ? 'live + projected' : 'projected'}${cushion > 0 ? ` · ${fmt(cushion)} above the bottom` : ''}`,
+        info: plan.info,
+        rows: plan.rows,
+      };
+    });
+    renderStatCards(document.getElementById('danger-grid'), dangerTiles, 'danger');
+    document.getElementById('danger-head').hidden = !dangerTiles.length;
 
     // ---- League Insights: backward-looking patterns in the data — who's
     // good at this, where the edge is, and how the season is shaping up. ----

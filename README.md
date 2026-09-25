@@ -197,6 +197,12 @@ and run `node --check` on the extracted inline `<script>` block.
 - Every tile can carry an `info` explainer, shown at the top of its expanded panel.
 - 2026 bye weeks are hardcoded in `BYE_WEEKS` (from ESPN's schedule); update each season.
 
+- Chopping Block now picks the team with the highest Chop Risk (banked + projected),
+  and a **Danger Zone** below it lists the next three. Each expands into an escape
+  plan: why (rank, gap/cushion, dead starters, weakest spots vs. the average starter
+  at that position) and how (still-possible lineup swaps, free-agent upgrades, and
+  the projected score/rank after every move).
+
 ## TODO / next session
 
 - [x] **Open the live site in an actual browser** and click through it —
