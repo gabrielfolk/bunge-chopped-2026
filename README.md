@@ -181,6 +181,22 @@ and run `node --check` on the extracted inline `<script>` block.
   keeps a redirect from the old `gabefolk` URLs, but updated the local git
   remote and every link in this README to the new URL rather than rely on it.
 
+**2026-09-24 — stats audit: Trash Talk / Strategy / League Insights rebuilt.**
+- "Points left on the table" is now **optimal lineup minus the lineup set** (greedy
+  fill of the league's slots, narrowest first), not raw bench points. For the current
+  week, played players count at actual points and unplayed ones at projection.
+  Drives the Trash Talk tiles, the season total, Lineup Efficiency, and the
+  "Points Left on the Table" section.
+- Trash Talk: Lineup Landmines (now includes bye), Points Left on the Table,
+  Biggest Bust (starters only), Season Points Left on the Table, Kept Starting a Dud.
+- Strategy: Chop Risk (normal model, sd = league's own projection RMSE, numeric
+  integration of P(lowest)), Bye Week Crunch, Dead Roster Spots, Dry Powder, Best Available.
+- Insights: Positional Edge (P75−P25 spread per start), Lineup Efficiency, Beats the
+  Projections, Consistency (needs 3+ completed weeks), plus the earlier ones.
+  Squeaked By / Living Dangerously / Top Dog now use completed weeks only.
+- Every tile can carry an `info` explainer, shown at the top of its expanded panel.
+- 2026 bye weeks are hardcoded in `BYE_WEEKS` (from ESPN's schedule); update each season.
+
 ## TODO / next session
 
 - [x] **Open the live site in an actual browser** and click through it —
