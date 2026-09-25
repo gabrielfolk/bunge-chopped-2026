@@ -1611,7 +1611,9 @@
       rows: wm.map(m => {
         const ptsOf = pid => (m.players_points || {})[pid] || 0;
         const opt = optimalLineup(matchupPids(m), ptsOf);
-        return { roster_id: m.roster_id, actual: m.points, optimal: opt.total, gap: Math.max(0, opt.total - m.points) };
+        const swaps = lineupSwapPairs(m, ptsOf, opt.picks).filter(sw => sw.gain > 0.005).map(sw =>
+          `Start ${playerLabel(sw.inPid).name} (${fmt(ptsOf(sw.inPid))}) over ${sw.outPid ? `${playerLabel(sw.outPid).name} (${fmt(ptsOf(sw.outPid))})` : 'an empty slot'}`);
+        return { roster_id: m.roster_id, actual: m.points, optimal: opt.total, gap: Math.max(0, opt.total - m.points), swaps };
       }),
     }));
 
@@ -1721,7 +1723,10 @@
         ? `${landmines[0].team} is starting ${landmines[0].player} (${landmines[0].flag})${landmines.length > 1 ? ` — plus ${landmines.length - 1} more around the league` : ''}`
         : 'nobody is starting a player who is out or on bye this week',
       info: "Starters who can't score this week: ruled Out, Doubtful, on IR/PUP/suspended, inactive, without an NFL team, or on their team's bye. A near-certain 0 in the lineup.",
-      rows: landmines.map(l => ({ label: l.team, value: `${l.player} (${l.flag})` })),
+      rows: Array.from(new Set(landmines.map(l => l.rid))).map(rid => {
+        const mine = landmines.filter(l => l.rid === rid);
+        return { label: teamLabel(rid), value: `${mine.length} dead starter${mine.length === 1 ? '' : 's'}`, moves: mine.map(l => `${l.player} (${l.flag})`) };
+      }),
       emptyMessage: 'Every starting lineup is clean this week.',
     });
 
@@ -1747,7 +1752,20 @@
         headline: teamLabel(worst.rid),
         detail: `Started ${playerLabel(worst.pid).name}: ${fmt(worst.actualPts)} points against a ${fmt(worst.projPts)} projection`,
         info: "Starters only (a benched bust doesn't cost anything). Actual points minus Sleeper's pre-game projection, for players whose game has kicked off.",
-        rows: starterBustsThisWeek.filter(r => r.delta < 0).slice(0, 8).map(r => ({ label: `${playerLabel(r.pid).name} (${teamLabel(r.rid)})`, value: signed(r.delta) })),
+        rows: starterBustsThisWeek.filter(r => r.delta < 0).slice(0, 8).map(r => {
+          const m = matchupByRoster.get(r.rid);
+          const ptsOf = currentPtsOf(m);
+          const benchAlt = matchupPids(m).filter(pid => !m.starters.includes(pid) && posOf(pid) === posOf(r.pid))
+            .sort((a, b) => ptsOf(b) - ptsOf(a))[0];
+          return {
+            label: `${playerLabel(r.pid).name} (${teamLabel(r.rid)})`,
+            value: signed(r.delta),
+            moves: [
+              `${fmt(r.actualPts)} actual vs ${fmt(r.projPts)} projected`,
+              benchAlt ? `Best benched ${posOf(r.pid)}: ${playerLabel(benchAlt).name} (${currentPtsLabel(ptsOf, benchAlt)})` : `No other ${posOf(r.pid)} on the bench`,
+            ],
+          };
+        }),
       });
     }
 
@@ -1765,7 +1783,16 @@
           headline: teamLabel(seasonGapSorted[0][0]),
           detail: `${fmt(seasonGapSorted[0][1])} points lost to start/sit mistakes across ${weeksRange}`,
           info: 'Each completed week: best possible lineup from that week\'s roster minus the lineup actually set, summed over the season.',
-          rows: seasonGapSorted.map(([rid, v]) => ({ label: teamLabel(rid), value: fmt(v) })),
+          rows: seasonGapSorted.map(([rid, v]) => ({
+            label: teamLabel(rid),
+            value: fmt(v),
+            moves: lineupGapsByWeek.flatMap(({ week, rows }) => {
+              const r = rows.find(x => x.roster_id === rid);
+              if (!r) return [];
+              if (r.gap < 0.005) return [`Week ${week}: perfect lineup`];
+              return r.swaps.map((sw, i) => `Week ${week}${i === 0 ? ` (−${fmt(r.gap)})` : ''}: ${sw}`);
+            }),
+          })),
         });
       }
 
@@ -1773,12 +1800,13 @@
       // after week while he keeps missing his projection — only weeks he was
       // actually in the lineup count.
       const dud = new Map();
-      completedWeeks.forEach(({ matchups: wm, stats: wkStats, proj: wkProj }) => {
+      completedWeeks.forEach(({ week, matchups: wm, stats: wkStats, proj: wkProj }) => {
         starterBustsFor(wm, wkStats, wkProj).forEach(r => {
           const key = `${r.rid}|${r.pid}`;
-          const e = dud.get(key) || { rid: r.rid, pid: r.pid, deltaSum: 0, starts: 0 };
+          const e = dud.get(key) || { rid: r.rid, pid: r.pid, deltaSum: 0, starts: 0, log: [] };
           e.deltaSum += r.delta;
           e.starts += 1;
+          e.log.push(`Week ${week}: ${fmt(r.actualPts)} vs ${fmt(r.projPts)} proj (${signed(r.delta)})`);
           dud.set(key, e);
         });
       });
@@ -1791,7 +1819,7 @@
           headline: teamLabel(worst.rid),
           detail: `${worst.starts} starts for ${playerLabel(worst.pid).name}, ${fmt(Math.abs(worst.deltaSum))} points under projection in total`,
           info: 'Players started 2+ times by the same manager, ranked by total points under projection in the weeks they were in the lineup.',
-          rows: dudRows.slice(0, 8).map(r => ({ label: `${playerLabel(r.pid).name} (${teamLabel(r.rid)})`, value: `${signed(r.deltaSum)} · ${r.starts} starts` })),
+          rows: dudRows.slice(0, 8).map(r => ({ label: `${playerLabel(r.pid).name} (${teamLabel(r.rid)})`, value: `${signed(r.deltaSum)} · ${r.starts} starts`, moves: r.log })),
         });
       }
     }
@@ -1866,7 +1894,15 @@
           headline: teamLabel(top.roster_id),
           detail: `${pct(top.p)} chance of the week's lowest score — ${anyPlayedThisWeek ? 'tracking' : 'projected'} ${fmt(top.mu)} ± ${fmt(top.sd)}`,
           info: `Each team's chance of posting the week's lowest score. Score = points already banked + projections for starters yet to play, with ± uncertainty set by ${residuals.length >= 10 ? `this league's own projection miss (±${fmt(baseSd)} per lineup over ${residuals.length} team-weeks)` : `a typical ±${DEFAULT_SD} PPR forecast miss until this league has 10+ team-weeks of history`}, shrinking as games finish. In a chop league you're managing downside risk, not upside: a risky lineup near the bottom should chase a safer floor.`,
-          rows: riskRows.map(r => ({ label: teamLabel(r.roster_id), value: `${r.p < 0.005 ? '<1%' : pct(r.p)} · ${fmt(r.mu)}` })),
+          rows: riskRows.map(r => {
+            const m = matchupByRoster.get(r.roster_id);
+            const ptsOf = currentPtsOf(m);
+            return {
+              label: teamLabel(r.roster_id),
+              value: `${r.p < 0.005 ? '<1%' : pct(r.p)} · ${fmt(r.mu)}`,
+              moves: m.starters.filter(pid => pid && pid !== '0').map(pid => `${posOf(pid) || '—'} ${playerLabel(pid).name}: ${currentPtsLabel(ptsOf, pid)}`),
+            };
+          }),
         });
       }
     }
@@ -1947,6 +1983,15 @@
         const sortedLeft = faab.map(f => f.left).sort((a, b) => a - b);
         const median = sortedLeft[Math.floor(sortedLeft.length / 2)];
         const even = faab[0].left === faab[faab.length - 1].left;
+        const bidsByRoster = new Map();
+        allWeekNumbers.forEach((wk, i) => allWeeksTxns[i].forEach(tx => {
+          if (tx.type !== 'waiver' || tx.status !== 'complete') return;
+          const bid = tx.settings && tx.settings.waiver_bid;
+          Object.entries(tx.adds || {}).forEach(([pid, rid]) => {
+            if (!bidsByRoster.has(rid)) bidsByRoster.set(rid, []);
+            bidsByRoster.get(rid).push(`Week ${wk}: $${bid || 0} on ${playerLabel(pid).name} (${playerLabel(pid).pos || '—'})`);
+          });
+        }));
         strategyTiles.push({
           eyebrow: 'Dry Powder',
           headline: even ? 'Even money' : teamLabel(faab[0].rid),
@@ -1954,7 +1999,7 @@
             ? `Every team still has $${faab[0].left} of FAAB — first big bid on a chopped roster's players sets the market`
             : `$${faab[0].left} of FAAB left — ${pct(faab[0].left / totalLeft)} of all the buying power left in the league (median team: $${median})`,
           info: "Every chop dumps a whole roster, often with a couple of starters, onto waivers at once, and FAAB is the only way to bid on them. Share = each team's remaining budget over the league's total. Teams with the most left can outbid everyone on the next chopped team's best players.",
-          rows: faab.map(f => ({ label: teamLabel(f.rid), value: `$${f.left} · ${pct(f.left / totalLeft)}` })),
+          rows: faab.map(f => ({ label: teamLabel(f.rid), value: `$${f.left} · ${pct(f.left / totalLeft)}`, moves: bidsByRoster.get(f.rid) || ['No waiver claims won yet'] })),
         });
       }
     }
@@ -1970,11 +2015,14 @@
         const pp = projOf(state.projections, pid);
         if (pp >= BOOM_BUST_MIN_PROJECTION) fas.push({ pid, pos: p.position, proj: pp });
       });
-      const beats = fa => aliveTeams.filter(t => {
-        const same = t.starters.filter(pid => posOf(pid) === fa.pos).map(pid => projOf(state.projections, pid));
-        return same.length && Math.min(...same) < fa.proj;
-      }).length;
-      fas.forEach(fa => { fa.beats = beats(fa); });
+      const upgradesFor = fa => aliveTeams.map(t => {
+        const weakest = t.starters.filter(pid => posOf(pid) === fa.pos)
+          .sort((a, b) => projOf(state.projections, a) - projOf(state.projections, b))[0];
+        return weakest && projOf(state.projections, weakest) < fa.proj
+          ? `${teamLabel(t.roster_id)}: over ${playerLabel(weakest).name} (${fmt(projOf(state.projections, weakest))} proj), +${fmt(fa.proj - projOf(state.projections, weakest))}`
+          : null;
+      }).filter(Boolean);
+      fas.forEach(fa => { fa.upgrades = upgradesFor(fa); fa.beats = fa.upgrades.length; });
       fas.sort((a, b) => b.beats - a.beats || b.proj - a.proj);
       if (fas.length) {
         const topFa = fas[0];
@@ -1988,7 +2036,7 @@
           headline: playerLabel(topFa.pid).name,
           detail: `Unrostered ${topFa.pos} projected for ${fmt(topFa.proj)} this week — would out-project the weakest starting ${topFa.pos} on ${topFa.beats} team${topFa.beats === 1 ? '' : 's'}`,
           info: "Healthy unrostered QB/RB/WR/TE, ranked by how many teams he'd be an instant upgrade for (\"beats\" = out-projects that team's weakest starter at his position this week), then by Sleeper's projection.",
-          rows: fas.slice(0, 10).map(fa => ({ label: faLabel(fa), value: `${fmt(fa.proj)} proj · beats ${fa.beats}` })),
+          rows: fas.slice(0, 10).map(fa => ({ label: faLabel(fa), value: `${fmt(fa.proj)} proj · beats ${fa.beats}`, moves: fa.upgrades.length ? fa.upgrades : ['Not an upgrade on any current lineup'] })),
         });
       }
     }
@@ -2184,11 +2232,14 @@
     // controls by having the better player there.
     if (completedWeeks.length) {
       const samples = new Map();
-      completedWeeks.forEach(({ matchups: wm }) => wm.forEach(m => m.starters.forEach(pid => {
+      const startLog = new Map();
+      completedWeeks.forEach(({ week, matchups: wm }) => wm.forEach(m => m.starters.forEach(pid => {
         const pos = posOf(pid);
         if (!pos || !pid || pid === '0') return;
         if (!samples.has(pos)) samples.set(pos, []);
         samples.get(pos).push((m.players_points || {})[pid] || 0);
+        if (!startLog.has(pos)) startLog.set(pos, []);
+        startLog.get(pos).push({ pid, rid: m.roster_id, week, pts: (m.players_points || {})[pid] || 0 });
       })));
       const quantile = (sorted, q) => {
         const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
@@ -2205,7 +2256,15 @@
           headline: `${top.pos} is where weeks are won`,
           detail: `A 75th-percentile ${top.pos} start outscores a 25th-percentile one by ${fmt(top.spread)} points, the widest gap of any position (${weeksRange})`,
           info: 'Every player started in a completed week, grouped by position. Avg = points per start. Spread = 75th minus 25th percentile start, i.e. how much having the better player there typically swings a week. The biggest spread is where waiver adds and trades move the needle most.',
-          rows: posRows.map(r => ({ label: `${r.pos} · ${fmt(r.avg)} avg per start`, value: `${fmt(r.spread)} spread` })),
+          rows: posRows.map(r => {
+            const log = startLog.get(r.pos).slice().sort((a, b) => b.pts - a.pts);
+            const line = (tag, e) => `${tag}: ${playerLabel(e.pid).name} ${fmt(e.pts)} (Wk ${e.week}, ${teamLabel(e.rid)})`;
+            return {
+              label: `${r.pos} · ${fmt(r.avg)} avg per start`,
+              value: `${fmt(r.spread)} spread`,
+              moves: [...log.slice(0, 3).map(e => line('Best', e)), ...log.slice(-3).reverse().map(e => line('Worst', e))],
+            };
+          }),
         });
       }
     }
@@ -2230,7 +2289,14 @@
           headline: teamLabel(best.rid),
           detail: `Started ${(best.ratio * 100).toFixed(1)}% of their best possible lineup's points (${weeksRange}); ${teamLabel(worst.rid)} is last at ${(worst.ratio * 100).toFixed(1)}%`,
           info: "Points actually scored divided by what the best possible lineup from the same roster would have scored, season to date. 100% means every start/sit call was right. It's the clean measure of lineup-setting skill, separate from how good the roster is.",
-          rows: effRows.map(r => ({ label: teamLabel(r.rid), value: `${(r.ratio * 100).toFixed(1)}%` })),
+          rows: effRows.map(r => ({
+            label: teamLabel(r.rid),
+            value: `${(r.ratio * 100).toFixed(1)}%`,
+            moves: lineupGapsByWeek.map(({ week, rows }) => {
+              const w = rows.find(x => x.roster_id === r.rid);
+              return w && w.optimal > 0 ? `Week ${week}: ${fmt(w.actual)} of ${fmt(w.optimal)} possible (${(w.actual / w.optimal * 100).toFixed(1)}%)` : null;
+            }).filter(Boolean),
+          })),
         });
       }
     }
@@ -2240,13 +2306,17 @@
     // numbers or lagging them?
     if (completedWeeks.length) {
       const edge = new Map();
-      completedWeeks.forEach(({ matchups: wm, proj: wkProj }) => wm.forEach(m => {
+      completedWeeks.forEach(({ week, matchups: wm, proj: wkProj }) => wm.forEach(m => {
         if (!aliveIds.has(m.roster_id)) return;
         const projTotal = m.starters.reduce((s, pid) => s + projOf(wkProj, pid), 0);
         if (projTotal <= 0) return;
-        const e = edge.get(m.roster_id) || { sum: 0, weeks: 0 };
+        const e = edge.get(m.roster_id) || { sum: 0, weeks: 0, log: [] };
         e.sum += m.points - projTotal;
         e.weeks += 1;
+        const deltas = m.starters.filter(pid => pid && pid !== '0')
+          .map(pid => ({ pid, d: ((m.players_points || {})[pid] || 0) - projOf(wkProj, pid) })).sort((a, b) => b.d - a.d);
+        const hi = deltas[0], lo = deltas[deltas.length - 1];
+        e.log.push(`Week ${week}: ${fmt(m.points)} vs ${fmt(projTotal)} proj (${signed(m.points - projTotal)}). Best: ${playerLabel(hi.pid).name} ${signed(hi.d)}; worst: ${playerLabel(lo.pid).name} ${signed(lo.d)}`);
         edge.set(m.roster_id, e);
       }));
       const edgeRows = Array.from(edge.entries()).map(([rid, e]) => ({ rid, ...e })).sort((a, b) => b.sum - a.sum);
@@ -2257,7 +2327,7 @@
           headline: teamLabel(best.rid),
           detail: `Lineups have outscored Sleeper's projections by ${fmt(best.sum)} points (${fmt(best.sum / best.weeks)}/week); ${teamLabel(worst.rid)} trails by ${fmt(Math.abs(worst.sum))}${smallSample ? ' (small sample)' : ''}`,
           info: `Actual lineup points minus Sleeper's pre-game projection for the same starters, summed over ${weeksRange}. Consistently positive means picking starters the market underrates. Over a few weeks it's mostly luck; if it holds up past week 6 or so, it's probably skill.`,
-          rows: edgeRows.map(r => ({ label: teamLabel(r.rid), value: `${signed(r.sum)} · ${signed(r.sum / r.weeks)}/wk` })),
+          rows: edgeRows.map(r => ({ label: teamLabel(r.rid), value: `${signed(r.sum)} · ${signed(r.sum / r.weeks)}/wk`, moves: r.log })),
         });
       }
     }
@@ -2266,15 +2336,16 @@
     // team's score. Needs 3+ completed weeks to mean anything.
     if (completedWeeks.length >= 3) {
       const scores = new Map();
-      completedWeeks.forEach(({ matchups: wm }) => wm.forEach(m => {
+      completedWeeks.forEach(({ week, matchups: wm }) => wm.forEach(m => {
         if (!aliveIds.has(m.roster_id)) return;
         if (!scores.has(m.roster_id)) scores.set(m.roster_id, []);
-        scores.get(m.roster_id).push(m.points);
+        scores.get(m.roster_id).push({ week, pts: m.points });
       }));
-      const volRows = Array.from(scores.entries()).filter(([, v]) => v.length >= 3).map(([rid, v]) => {
+      const volRows = Array.from(scores.entries()).filter(([, wv]) => wv.length >= 3).map(([rid, wv]) => {
+        const v = wv.map(w => w.pts);
         const mean = v.reduce((a, b) => a + b, 0) / v.length;
         const sd = Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / (v.length - 1));
-        return { rid, mean, sd };
+        return { rid, mean, sd, weekly: wv };
       }).sort((a, b) => a.sd - b.sd);
       if (volRows.length >= 2) {
         const steady = volRows[0], wild = volRows[volRows.length - 1];
@@ -2283,7 +2354,7 @@
           headline: `Steadiest: ${teamLabel(steady.rid)}`,
           detail: `${fmt(steady.mean)} avg, ± ${fmt(steady.sd)} week to week. Wildest ride: ${teamLabel(wild.rid)} at ± ${fmt(wild.sd)}`,
           info: `Average weekly score ± standard deviation over ${weeksRange}. In a chop league volatility is the enemy: one bad week ends your season, so a team's floor (roughly avg minus 1 SD) matters more than its ceiling. Sorted steadiest first.`,
-          rows: volRows.map(r => ({ label: teamLabel(r.rid), value: `${fmt(r.mean)} ± ${fmt(r.sd)}` })),
+          rows: volRows.map(r => ({ label: teamLabel(r.rid), value: `${fmt(r.mean)} ± ${fmt(r.sd)}`, moves: r.weekly.map(w => `Week ${w.week}: ${fmt(w.pts)}`) })),
         });
       }
     }
@@ -2314,7 +2385,12 @@
           headline: teamLabel(bestRid),
           detail: `${info.name} ${isProjected ? 'is projected for' : (allPlayed ? 'scored' : 'is on pace for')} ${Math.round(bestShare * 100)}% of their ${fmt(bestTotal)} ${isProjected ? 'projected ' : (allPlayed ? '' : 'live + projected ')}points this week`,
           info: `The single starter responsible for the biggest share of his team's points this week. An even split across ${lineupSlots.length} starters would be about ${Math.round(100 / Math.max(1, lineupSlots.length))}% each, so anything well above that is a concentrated bet on one player.`,
-          rows: [{ label: info.name, value: `${fmt(bestPts)} of ${fmt(bestTotal)}` }],
+          rows: (() => {
+            const m = matchupByRoster.get(bestRid);
+            const ptsOf = currentPtsOf(m);
+            return m.starters.filter(pid => pid && pid !== '0').sort((a, b) => ptsOf(b) - ptsOf(a))
+              .map(pid => ({ label: `${playerLabel(pid).name} (${posOf(pid) || '—'})`, value: `${currentPtsLabel(ptsOf, pid)} · ${Math.round(ptsOf(pid) / bestTotal * 100)}%` }));
+          })(),
         });
       }
     }
@@ -2340,7 +2416,17 @@
         headline: teamLabel(closest.safe.roster_id),
         detail: `Stayed off the bottom in Week ${closest.week} by just ${fmt(closest.gap)} point${closest.gap === 1 ? '' : 's'} over ${teamLabel(closest.bottom.roster_id)}`,
         info: 'Margin between the lowest score (chopped) and the second-lowest (survived) each completed week, closest call first.',
-        rows: weeklyGaps.slice(0, 8).map(g => ({ label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}`, value: fmt(g.gap) })),
+        rows: weeklyGaps.slice(0, 8).map(g => {
+          const gapOf = rid => ((lineupGapsByWeek.find(x => x.week === g.week) || { rows: [] }).rows.find(x => x.roster_id === rid) || { gap: 0 }).gap;
+          return {
+            label: `Week ${g.week}: ${teamLabel(g.safe.roster_id)} over ${teamLabel(g.bottom.roster_id)}`,
+            value: fmt(g.gap),
+            moves: [
+              `${teamLabel(g.safe.roster_id)} (survived): ${fmt(g.safe.points)}`,
+              `${teamLabel(g.bottom.roster_id)} (lowest): ${fmt(g.bottom.points)}${gapOf(g.bottom.roster_id) > g.gap ? `, and left ${fmt(gapOf(g.bottom.roster_id))} on their bench, more than enough to survive` : ''}`,
+            ],
+          };
+        }),
       });
     }
 
@@ -2348,10 +2434,14 @@
     // surviving, but not by much.
     {
       const dangerCounts = new Map();
-      weeklyRankings.filter(r => r.ranked.length >= 3).forEach(({ ranked }) => {
+      const dangerLog = new Map();
+      weeklyRankings.filter(r => r.ranked.length >= 3).forEach(({ week, ranked }) => {
         const n = ranked.length;
-        [ranked[n - 2], ranked[n - 3]].forEach(m => {
-          if (aliveIds.has(m.roster_id)) dangerCounts.set(m.roster_id, (dangerCounts.get(m.roster_id) || 0) + 1);
+        [ranked[n - 2], ranked[n - 3]].forEach((m, k) => {
+          if (!aliveIds.has(m.roster_id)) return;
+          dangerCounts.set(m.roster_id, (dangerCounts.get(m.roster_id) || 0) + 1);
+          if (!dangerLog.has(m.roster_id)) dangerLog.set(m.roster_id, []);
+          dangerLog.get(m.roster_id).push(`Week ${week}: ${k === 0 ? '2nd' : '3rd'}-lowest of ${n}, ${fmt(m.points)} pts, ${fmt(m.points - ranked[n - 1].points)} above ${teamLabel(ranked[n - 1].roster_id)}`);
         });
       });
       const dangerSorted = Array.from(dangerCounts.entries()).sort((a, b) => b[1] - a[1]);
@@ -2361,7 +2451,7 @@
           headline: teamLabel(dangerSorted[0][0]),
           detail: `${dangerSorted[0][1]} weeks finishing 2nd- or 3rd-lowest without getting chopped — living on borrowed time`,
           info: 'Completed weeks finishing 2nd- or 3rd-lowest: one or two spots above the team that got chopped.',
-          rows: dangerSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}` })),
+          rows: dangerSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}`, moves: dangerLog.get(rid) })),
         });
       }
     }
@@ -2369,13 +2459,19 @@
     // Top Dog: most weeks with the league's single highest score.
     if (weeklyRankings.length) {
       const winCounts = new Map();
-      weeklyRankings.forEach(({ ranked }) => winCounts.set(ranked[0].roster_id, (winCounts.get(ranked[0].roster_id) || 0) + 1));
+      const winLog = new Map();
+      weeklyRankings.forEach(({ week, ranked }) => {
+        const rid = ranked[0].roster_id;
+        winCounts.set(rid, (winCounts.get(rid) || 0) + 1);
+        if (!winLog.has(rid)) winLog.set(rid, []);
+        winLog.get(rid).push(`Week ${week}: ${fmt(ranked[0].points)} pts, ${fmt(ranked[0].points - ranked[1].points)} ahead of ${teamLabel(ranked[1].roster_id)}`);
+      });
       const winSorted = Array.from(winCounts.entries()).sort((a, b) => b[1] - a[1]);
       insightTiles.push({
         eyebrow: 'Top Dog',
         headline: teamLabel(winSorted[0][0]),
         detail: `${winSorted[0][1]} week${winSorted[0][1] === 1 ? '' : 's'} with the league's highest score (${weeksRange})`,
-        rows: winSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}` })),
+        rows: winSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}`, moves: winLog.get(rid) })),
       });
     }
 
@@ -2385,9 +2481,14 @@
     // this league never populates (always 0). Failed waiver bids don't count.
     {
       const txnSeasonCountByRoster = new Map();
-      allWeeksTxns.forEach(wkTxns => wkTxns.forEach(tx => {
+      const txnLog = new Map();
+      allWeeksTxns.forEach((wkTxns, i) => wkTxns.forEach(tx => {
         if (tx.status && tx.status !== 'complete') return;
-        (tx.roster_ids || []).forEach(rid => txnSeasonCountByRoster.set(rid, (txnSeasonCountByRoster.get(rid) || 0) + 1));
+        (tx.roster_ids || []).forEach(rid => {
+          txnSeasonCountByRoster.set(rid, (txnSeasonCountByRoster.get(rid) || 0) + 1);
+          if (!txnLog.has(rid)) txnLog.set(rid, []);
+          txnLog.get(rid).push(`Week ${allWeekNumbers[i]}: ${describeTransactionForRoster(tx, rid)}`);
+        });
       }));
       const moveCounts = aliveTeams.map(t => ({ rid: t.roster_id, count: txnSeasonCountByRoster.get(t.roster_id) || 0 }))
         .sort((a, b) => a.count - b.count);
@@ -2398,7 +2499,7 @@
           headline: teamLabel(quietest.rid),
           detail: `Just ${quietest.count} roster move${quietest.count === 1 ? '' : 's'} all season — autopilot engaged`,
           info: 'Completed adds, drops, waiver claims and trades this season. Failed waiver bids are excluded.',
-          rows: moveCounts.map(m => ({ label: teamLabel(m.rid), value: `${m.count} move${m.count === 1 ? '' : 's'}` })),
+          rows: moveCounts.map(m => ({ label: teamLabel(m.rid), value: `${m.count} move${m.count === 1 ? '' : 's'}`, moves: txnLog.get(m.rid) || ['No moves yet'] })),
         });
       }
     }
@@ -2428,10 +2529,24 @@
         const valued = draftRows.map(r => ({ ...r, finishRank: finishRank.get(r.pid), valueGap: r.pickNo - finishRank.get(r.pid) }));
         const steal = valued.slice().sort((a, b) => b.valueGap - a.valueGap)[0];
         const bust = valued.slice().sort((a, b) => a.valueGap - b.valueGap)[0];
-        const rowFor = r => ({
-          label: `${playerLabel(r.pid).name} — Pick ${r.pickNo} (Rd ${r.round}), ${teamLabel(r.rosterId)}`,
-          value: `${r.valueGap > 0 ? '+' : ''}${r.valueGap} (${fmt(r.pts)} pts)`,
-        });
+        const rowFor = r => {
+          const p = state.players[r.pid] || {};
+          const weekly = allWeekNumbers.map((wk, i) => {
+            const st = allWeeksStatsProj[i].stats[r.pid];
+            if (i === allWeekNumbers.length - 1 && !hasPlayed(state.stats, r.pid)) return null;
+            return `Wk ${wk}: ${st && st.pts_ppr != null ? fmt(st.pts_ppr) : (st && st.gp ? '0.00' : 'did not play')}`;
+          }).filter(Boolean);
+          const status = p.injury_status ? `${p.injury_status}${p.injury_body_part ? ` (${p.injury_body_part})` : ''}` : (p.team ? 'Healthy' : 'No NFL team');
+          return {
+            label: `${playerLabel(r.pid).name} — Pick ${r.pickNo} (Rd ${r.round}), ${teamLabel(r.rosterId)}`,
+            value: `${r.valueGap > 0 ? '+' : ''}${r.valueGap} (${fmt(r.pts)} pts)`,
+            moves: [
+              `${p.position || '—'}, ${p.team || 'FA'} · drafted #${r.pickNo}, scoring #${r.finishRank} among drafted players`,
+              `Status: ${status}`,
+              ...weekly,
+            ],
+          };
+        };
         insightTiles.push({
           eyebrow: (isLiveThisWeek || historyWeeks.length) ? 'Draft Grades' : 'Draft Grades (Projected)',
           headline: `Steal: ${playerLabel(steal.pid).name}`,
@@ -2450,15 +2565,15 @@
     {
       const rookieCounts = aliveTeams.map(t => ({
         rid: t.roster_id,
-        count: t.starters.filter(pid => state.players[pid] && state.players[pid].years_exp === 0).length,
-      })).filter(r => r.count > 0).sort((a, b) => b.count - a.count);
+        pids: t.starters.filter(pid => state.players[pid] && state.players[pid].years_exp === 0),
+      })).map(r => ({ ...r, count: r.pids.length })).filter(r => r.count > 0).sort((a, b) => b.count - a.count);
       if (rookieCounts.length && rookieCounts[0].count >= 2) {
         insightTiles.push({
           eyebrow: 'Rookie Reliance',
           headline: teamLabel(rookieCounts[0].rid),
           detail: `Starting ${rookieCounts[0].count} rookies this week, the most in the league`,
           info: "First-year players in this week's starting lineup. Rookie roles tend to grow through the season, so this is usually a bet that gets better with time.",
-          rows: rookieCounts.map(r => ({ label: teamLabel(r.rid), value: `${r.count} rookie${r.count === 1 ? '' : 's'}` })),
+          rows: rookieCounts.map(r => ({ label: teamLabel(r.rid), value: `${r.count} rookie${r.count === 1 ? '' : 's'}`, moves: r.pids.map(pid => `${playerLabel(pid).name} (${posOf(pid)}, ${playerLabel(pid).team || 'FA'}): ${fmt(projOf(state.projections, pid))} proj this week`) })),
         });
       }
     }
@@ -2468,7 +2583,9 @@
       const ageByRoster = aliveTeams.map(t => {
         const ages = (t.players || []).map(pid => state.players[pid] && state.players[pid].age).filter(a => a != null);
         const avg = ages.length ? ages.reduce((a, b) => a + b, 0) / ages.length : null;
-        return { roster_id: t.roster_id, avg };
+        const byAgeDesc = (t.players || []).filter(pid => state.players[pid] && state.players[pid].age != null)
+          .sort((a, b) => state.players[b].age - state.players[a].age);
+        return { roster_id: t.roster_id, avg, players: byAgeDesc };
       }).filter(r => r.avg != null);
       if (ageByRoster.length) {
         const byAge = ageByRoster.slice().sort((a, b) => b.avg - a.avg);
@@ -2478,7 +2595,7 @@
           headline: teamLabel(oldest.roster_id),
           detail: `Oldest roster in the league at ${oldest.avg.toFixed(1)} years average — ${teamLabel(youngest.roster_id)} is the youngest at ${youngest.avg.toFixed(1)}`,
           info: 'Average age across the whole roster. RBs typically decline around 27–28 and WRs around 30, so an old roster is a bet on production now over later.',
-          rows: byAge.map(r => ({ label: teamLabel(r.roster_id), value: `${r.avg.toFixed(1)} yrs` })),
+          rows: byAge.map(r => ({ label: teamLabel(r.roster_id), value: `${r.avg.toFixed(1)} yrs`, moves: r.players.map(pid => `${playerLabel(pid).name} (${posOf(pid)}): ${state.players[pid].age}`) })),
         });
       }
     }
@@ -2494,14 +2611,15 @@
         });
         let topCollege = null, topCount = 0;
         counts.forEach((v, k) => { if (v > topCount) { topCount = v; topCollege = k; } });
-        return { roster_id: t.roster_id, topCollege, topCount };
+        const pids = (t.players || []).filter(pid => state.players[pid] && state.players[pid].college === topCollege);
+        return { roster_id: t.roster_id, topCollege, topCount, pids };
       }).filter(s => s.topCount >= 3).sort((a, b) => b.topCount - a.topCount);
       if (collegeStacks.length) {
         insightTiles.push({
           eyebrow: 'Alma Mater',
           headline: `${collegeStacks[0].topCount} players from ${collegeStacks[0].topCollege}`,
           detail: `${teamLabel(collegeStacks[0].roster_id)} is running a mini ${collegeStacks[0].topCollege} reunion`,
-          rows: collegeStacks.map(s => ({ label: teamLabel(s.roster_id), value: `${s.topCount} from ${s.topCollege}` })),
+          rows: collegeStacks.map(s => ({ label: teamLabel(s.roster_id), value: `${s.topCount} from ${s.topCollege}`, moves: s.pids.map(pid => `${playerLabel(pid).name} (${posOf(pid)}, ${playerLabel(pid).team || 'FA'})`) })),
         });
       }
     }
