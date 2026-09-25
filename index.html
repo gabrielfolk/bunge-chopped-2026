@@ -238,22 +238,21 @@
     margin-bottom: 64px;
   }
   #sec-chop { grid-column: span 4; display: flex; flex-direction: column; }
-  #sec-stats { grid-column: span 8; }
-  #sec-strategy, #sec-insights, #sec-boombust, #sec-bench, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
+  #sec-danger { grid-column: span 8; }
+  #sec-danger[hidden] { display: none; }
+  #sec-stats, #sec-strategy, #sec-insights, #sec-boombust, #sec-bench, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
     grid-column: span 12;
   }
-  .chop-card { box-sizing: border-box; }
-  .chop-wrap { position: relative; z-index: 2; }
+  .chop-card { box-sizing: border-box; flex: 1; }
+  .chop-wrap { position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column; }
   .chop-wrap.is-expanded { z-index: 25; }
-  .danger-head { margin-top: 22px; }
-  .danger-head[hidden] { display: none; }
-  .danger-head h2 { font-size: 18px; }
-  .danger-grid { grid-template-columns: 1fr; gap: 10px; }
+  .danger-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 640px) { .danger-grid { grid-template-columns: 1fr; } }
   .danger-grid .stat-tile { padding: 14px 18px; gap: 4px; }
   .danger-grid .stat-tile .eyebrow { color: var(--critical); }
   .danger-grid .stat-tile .headline { font-size: 20px; }
   @media (max-width: 860px) {
-    #sec-chop, #sec-stats { grid-column: span 12; }
+    #sec-chop, #sec-danger { grid-column: span 12; }
   }
   .section-head {
     display: flex;
@@ -380,8 +379,6 @@
     align-items: start;
     gap: 14px;
   }
-  #stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  @media (max-width: 480px) { #stat-grid { grid-template-columns: 1fr; } }
   .stat-card {
     position: relative;
     z-index: 1;
@@ -762,7 +759,10 @@
     <div class="chop-card liftable" id="chop-card"></div>
     <div class="stat-detail" id="chop-detail" hidden></div>
   </div>
-  <div class="section-head danger-head" id="danger-head" hidden>
+</section>
+
+<section id="sec-danger" hidden>
+  <div class="section-head">
     <h2>Danger Zone</h2>
     <span class="note">Next closest to the chop · tap for how to get out</span>
   </div>
@@ -2163,7 +2163,7 @@
       const plan = escapePlan(r);
       const cushion = r.mu - byMuAsc[0].mu;
       return {
-        eyebrow: `Danger Zone #${i + 1} · ${r.p < 0.005 ? '<1%' : pct(r.p)} chop risk`,
+        eyebrow: `#${i + 1} · ${r.p < 0.005 ? '<1%' : pct(r.p)} chop risk`,
         headline: teamLabel(r.roster_id),
         detail: `${fmt(r.mu)} ${anyPlayedThisWeek ? 'live + projected' : 'projected'}${cushion > 0 ? ` · ${fmt(cushion)} above the bottom` : ''}`,
         info: plan.info,
@@ -2171,7 +2171,7 @@
       };
     });
     renderStatCards(document.getElementById('danger-grid'), dangerTiles, 'danger');
-    document.getElementById('danger-head').hidden = !dangerTiles.length;
+    document.getElementById('sec-danger').hidden = !dangerTiles.length;
 
     // ---- League Insights: backward-looking patterns in the data — who's
     // good at this, where the edge is, and how the season is shaping up. ----
