@@ -1240,12 +1240,12 @@ function render() {
 
   // ---- Boom & bust: rostered players whose actual points this week are
   // furthest above/below Sleeper's pre-game projection ----
-  function renderBoomBustList(container, rows, kind, mode) {
+  function renderBoomBustList(container, rows, kind, mode, emptyMessage) {
     container.innerHTML = '';
     if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'stat-detail-empty';
-      empty.textContent = 'No projections available yet.';
+      empty.textContent = emptyMessage || 'No projections available yet.';
       container.appendChild(empty);
       return;
     }
@@ -1297,10 +1297,13 @@ function render() {
     boombustNote.textContent = "Live points vs. Sleeper's pre-game projection, rostered players only";
     boomLabel.textContent = '🚀 Overperforming';
     bustLabel.textContent = '📉 Underperforming';
-    const boomRows = boomBustRows.slice().sort((a, b) => b.delta - a.delta).slice(0, BOOM_BUST_COUNT);
-    const bustRows = worstBustRows.slice(0, BOOM_BUST_COUNT);
-    renderBoomBustList(document.getElementById('boom-list'), boomRows, 'boom');
-    renderBoomBustList(document.getElementById('bust-list'), bustRows, 'bust');
+    // Only players actually beating (or missing) their projection: with few
+    // games played, the "top 6" would otherwise pad out with players on the
+    // wrong side of zero.
+    const boomRows = boomBustRows.filter(r => r.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, BOOM_BUST_COUNT);
+    const bustRows = worstBustRows.filter(r => r.delta < 0).slice(0, BOOM_BUST_COUNT);
+    renderBoomBustList(document.getElementById('boom-list'), boomRows, 'boom', undefined, 'Nobody is beating their projection yet.');
+    renderBoomBustList(document.getElementById('bust-list'), bustRows, 'bust', undefined, 'Nobody is under their projection yet.');
   }
 
   // ---- Bench points ----
