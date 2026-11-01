@@ -96,29 +96,25 @@ function render() {
     graveyardSorted.forEach(t => {
       const h = chopHistory[t.roster_id];
       const card = document.createElement('div');
-      card.className = 'tombstone-card liftable';
+      card.className = 'tombstone-card';
+      const name = t.team_name || t.display_name;
+      // Owner handle only fits as a tooltip at this size.
+      if (t.team_name) card.title = `${t.team_name} (${t.display_name})`;
       const skull = document.createElement('div');
       skull.className = 'tombstone-skull';
       skull.textContent = '💀';
-      const teamCell = document.createElement('div');
-      teamCell.className = 'tombstone-team';
-      teamCell.appendChild(avatarEl(t));
+      const text = document.createElement('div');
+      text.className = 'tombstone-text';
       const nameEl = document.createElement('div');
       nameEl.className = 'tombstone-name';
-      nameEl.textContent = t.team_name || t.display_name;
-      teamCell.appendChild(nameEl);
-      if (t.team_name) {
-        const ownerEl = document.createElement('div');
-        ownerEl.className = 'tombstone-owner';
-        ownerEl.textContent = t.display_name;
-        teamCell.appendChild(ownerEl);
-      }
+      nameEl.textContent = name;
       const epitaph = document.createElement('div');
       epitaph.className = 'tombstone-epitaph';
-      epitaph.textContent = h ? `Chopped Week ${h.week} · ${fmt(h.points)} pts` : `Final score: ${fmt(t.fpts)} pts`;
+      epitaph.textContent = h ? `Wk ${h.week} · ${fmt(h.points)} pts` : `Final: ${fmt(t.fpts)} pts`;
+      text.appendChild(nameEl);
+      text.appendChild(epitaph);
       card.appendChild(skull);
-      card.appendChild(teamCell);
-      card.appendChild(epitaph);
+      card.appendChild(text);
       graveyardGrid.appendChild(card);
     });
   }

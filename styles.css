@@ -320,47 +320,43 @@ section { margin-bottom: 0; min-width: 0; }
   color: #fff;
 }
 
-/* ---------- Graveyard: one tombstone per chopped team ---------- */
+/* ---------- Graveyard: one compact headstone chip per chopped team ---------- */
 .graveyard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
 }
 .graveyard-empty {
+  grid-column: 1 / -1;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: var(--shadow);
-  padding: 22px 20px;
+  border-radius: 12px;
+  padding: 12px 14px;
   color: var(--ink-faint);
-  font-size: 13.5px;
+  font-size: 13px;
   text-align: center;
 }
 .tombstone-card {
   background: linear-gradient(160deg, var(--surface) 0%, var(--surface-2) 100%);
   border: 1px solid var(--border);
-  border-radius: 16px 16px 46px 46px;
-  box-shadow: var(--shadow);
-  padding: 18px 16px 16px;
+  border-radius: 14px 14px 6px 6px; /* rounded top, flat base: a headstone */
+  padding: 7px 10px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  text-align: center;
+  gap: 8px;
+  min-width: 0;
 }
-.tombstone-skull { font-size: 20px; filter: grayscale(1); opacity: 0.75; }
-.tombstone-team { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 2px; }
-.tombstone-name { font-family: 'Oswald', system-ui, sans-serif; font-weight: 600; font-size: 15px; }
-.tombstone-owner { color: var(--ink-faint); font-size: 11.5px; }
-.tombstone-epitaph {
-  margin-top: 6px;
-  font-size: 11.5px;
-  font-style: italic;
-  color: var(--ink-muted);
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
-  width: 100%;
+.tombstone-skull { font-size: 14px; filter: grayscale(1); opacity: 0.7; flex: none; }
+.tombstone-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.tombstone-name {
+  font-family: 'Oswald', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.tombstone-epitaph { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
 
 /* ---------- Stat tiles ---------- */
 .stat-grid {
