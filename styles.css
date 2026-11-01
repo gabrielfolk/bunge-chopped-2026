@@ -230,7 +230,7 @@ section { margin-bottom: 0; min-width: 0; }
 #sec-chop { grid-column: span 4; display: flex; flex-direction: column; }
 #sec-danger { grid-column: span 8; }
 #sec-danger[hidden] { display: none; }
-#sec-stats, #sec-strategy, #sec-insights, #sec-boombust, #sec-bench, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
+#sec-stats, #sec-strategy, #sec-insights, #sec-boombust, #sec-faab, #sec-live, #sec-graveyard, #sec-roster {
   grid-column: span 12;
 }
 .chop-card { box-sizing: border-box; flex: 1; }
@@ -468,7 +468,7 @@ section { margin-bottom: 0; min-width: 0; }
   .stat-detail, .stat-detail-sub { animation: none; }
 }
 
-/* ---------- Bench chart ---------- */
+/* ---------- Bar-chart card (used by FAAB Remaining) ---------- */
 .bench-list {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -476,19 +476,6 @@ section { margin-bottom: 0; min-width: 0; }
   box-shadow: var(--shadow);
   padding: 6px 18px;
 }
-.bench-row {
-  display: grid;
-  grid-template-columns: 140px 1fr 56px;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-}
-.bench-row:last-child { border-bottom: none; }
-.bench-row .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bench-track { height: 9px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
-.bench-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, color-mix(in srgb, var(--critical) 55%, var(--surface)), var(--critical)); }
-.bench-val { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; text-align: right; color: var(--ink-muted); }
 
 /* ---------- FAAB remaining chart (shares .bench-list's card chrome) ---------- */
 .faab-row {

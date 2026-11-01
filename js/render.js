@@ -834,49 +834,6 @@ function render() {
   const insightsGrid = document.getElementById('insights-grid');
   const insightTiles = [];
 
-  // Positional Edge: which position separates good lineups from bad ones.
-  // Every started player-week in completed weeks, grouped by position; the
-  // spread between a 75th- and 25th-percentile start is the swing a manager
-  // controls by having the better player there.
-  if (completedWeeks.length) {
-    const samples = new Map();
-    const startLog = new Map();
-    completedWeeks.forEach(({ week, matchups: wm }) => wm.forEach(m => m.starters.forEach(pid => {
-      const pos = posOf(pid);
-      if (!pos || !pid || pid === '0') return;
-      if (!samples.has(pos)) samples.set(pos, []);
-      samples.get(pos).push((m.players_points || {})[pid] || 0);
-      if (!startLog.has(pos)) startLog.set(pos, []);
-      startLog.get(pos).push({ pid, rid: m.roster_id, week, pts: (m.players_points || {})[pid] || 0 });
-    })));
-    const quantile = (sorted, q) => {
-      const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
-      return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
-    };
-    const posRows = Array.from(samples.entries()).filter(([, v]) => v.length >= 5).map(([pos, v]) => {
-      const s = v.slice().sort((a, b) => a - b);
-      return { pos, avg: s.reduce((a, b) => a + b, 0) / s.length, spread: quantile(s, 0.75) - quantile(s, 0.25), n: s.length };
-    }).sort((a, b) => b.spread - a.spread);
-    if (posRows.length) {
-      const top = posRows[0];
-      insightTiles.push({
-        eyebrow: 'Positional Edge',
-        headline: `${top.pos} is where weeks are won`,
-        detail: `A 75th-percentile ${top.pos} start outscores a 25th-percentile one by ${fmt(top.spread)} points, the widest gap of any position (${weeksRange})`,
-        info: 'Every player started in a completed week, grouped by position. Avg = points per start. Spread = 75th minus 25th percentile start, i.e. how much having the better player there typically swings a week. The biggest spread is where waiver adds and trades move the needle most.',
-        rows: posRows.map(r => {
-          const log = startLog.get(r.pos).slice().sort((a, b) => b.pts - a.pts);
-          const line = (tag, e) => `${tag}: ${playerLabel(e.pid).name} ${fmt(e.pts)} (Wk ${e.week}, ${teamLabel(e.rid)})`;
-          return {
-            label: `${r.pos} · ${fmt(r.avg)} avg per start`,
-            value: `${fmt(r.spread)} spread`,
-            moves: [...log.slice(0, 3).map(e => line('Best', e)), ...log.slice(-3).reverse().map(e => line('Worst', e))],
-          };
-        }),
-      });
-    }
-  }
-
   // Lineup Efficiency: share of the best-possible lineup's points that
   // each manager actually started, season to date.
   if (completedWeeks.length) {
@@ -905,37 +862,6 @@ function render() {
             return w && w.optimal > 0 ? `Week ${week}: ${fmt(w.actual)} of ${fmt(w.optimal)} possible (${(w.actual / w.optimal * 100).toFixed(1)}%)` : null;
           }).filter(Boolean),
         })),
-      });
-    }
-  }
-
-  // Beats the Projections: lineup actual minus lineup projected, summed
-  // over completed weeks — are a manager's starters outrunning Sleeper's
-  // numbers or lagging them?
-  if (completedWeeks.length) {
-    const edge = new Map();
-    completedWeeks.forEach(({ week, matchups: wm, proj: wkProj }) => wm.forEach(m => {
-      if (!aliveIds.has(m.roster_id)) return;
-      const projTotal = m.starters.reduce((s, pid) => s + projOf(wkProj, pid), 0);
-      if (projTotal <= 0) return;
-      const e = edge.get(m.roster_id) || { sum: 0, weeks: 0, log: [] };
-      e.sum += m.points - projTotal;
-      e.weeks += 1;
-      const deltas = m.starters.filter(pid => pid && pid !== '0')
-        .map(pid => ({ pid, d: ((m.players_points || {})[pid] || 0) - projOf(wkProj, pid) })).sort((a, b) => b.d - a.d);
-      const hi = deltas[0], lo = deltas[deltas.length - 1];
-      e.log.push(`Week ${week}: ${fmt(m.points)} vs ${fmt(projTotal)} proj (${signed(m.points - projTotal)}). Best: ${playerLabel(hi.pid).name} ${signed(hi.d)}; worst: ${playerLabel(lo.pid).name} ${signed(lo.d)}`);
-      edge.set(m.roster_id, e);
-    }));
-    const edgeRows = Array.from(edge.entries()).map(([rid, e]) => ({ rid, ...e })).sort((a, b) => b.sum - a.sum);
-    if (edgeRows.length >= 2) {
-      const best = edgeRows[0], worst = edgeRows[edgeRows.length - 1];
-      insightTiles.push({
-        eyebrow: 'Beats the Projections',
-        headline: teamLabel(best.rid),
-        detail: `Lineups have outscored Sleeper's projections by ${fmt(best.sum)} points (${fmt(best.sum / best.weeks)}/week); ${teamLabel(worst.rid)} trails by ${fmt(Math.abs(worst.sum))}${smallSample ? ' (small sample)' : ''}`,
-        info: `Actual lineup points minus Sleeper's pre-game projection for the same starters, summed over ${weeksRange}. Consistently positive means picking starters the market underrates. Over a few weeks it's mostly luck; if it holds up past week 6 or so, it's probably skill.`,
-        rows: edgeRows.map(r => ({ label: teamLabel(r.rid), value: `${signed(r.sum)} · ${signed(r.sum / r.weeks)}/wk`, moves: r.log })),
       });
     }
   }
@@ -1064,54 +990,6 @@ function render() {
     }
   }
 
-  // Top Dog: most weeks with the league's single highest score.
-  if (weeklyRankings.length) {
-    const winCounts = new Map();
-    const winLog = new Map();
-    weeklyRankings.forEach(({ week, ranked }) => {
-      const rid = ranked[0].roster_id;
-      winCounts.set(rid, (winCounts.get(rid) || 0) + 1);
-      if (!winLog.has(rid)) winLog.set(rid, []);
-      winLog.get(rid).push(`Week ${week}: ${fmt(ranked[0].points)} pts, ${fmt(ranked[0].points - ranked[1].points)} ahead of ${teamLabel(ranked[1].roster_id)}`);
-    });
-    const winSorted = Array.from(winCounts.entries()).sort((a, b) => b[1] - a[1]);
-    insightTiles.push({
-      eyebrow: 'Top Dog',
-      headline: teamLabel(winSorted[0][0]),
-      detail: `${winSorted[0][1]} week${winSorted[0][1] === 1 ? '' : 's'} with the league's highest score (${weeksRange})`,
-      rows: winSorted.map(([rid, c]) => ({ label: teamLabel(rid), value: `${c} week${c === 1 ? '' : 's'}`, moves: winLog.get(rid) })),
-    });
-  }
-
-  // Set It and Forget It: fewest completed roster moves all season, while
-  // the league as a whole has clearly been active. Uses real per-week
-  // transaction counts rather than Sleeper's settings.total_moves, which
-  // this league never populates (always 0). Failed waiver bids don't count.
-  {
-    const txnSeasonCountByRoster = new Map();
-    const txnLog = new Map();
-    allWeeksTxns.forEach((wkTxns, i) => wkTxns.forEach(tx => {
-      if (tx.status && tx.status !== 'complete') return;
-      (tx.roster_ids || []).forEach(rid => {
-        txnSeasonCountByRoster.set(rid, (txnSeasonCountByRoster.get(rid) || 0) + 1);
-        if (!txnLog.has(rid)) txnLog.set(rid, []);
-        txnLog.get(rid).push(`Week ${allWeekNumbers[i]}: ${describeTransactionForRoster(tx, rid)}`);
-      });
-    }));
-    const moveCounts = aliveTeams.map(t => ({ rid: t.roster_id, count: txnSeasonCountByRoster.get(t.roster_id) || 0 }))
-      .sort((a, b) => a.count - b.count);
-    if (moveCounts.length && moveCounts[moveCounts.length - 1].count > 0) {
-      const quietest = moveCounts[0];
-      insightTiles.push({
-        eyebrow: 'Set It and Forget It',
-        headline: teamLabel(quietest.rid),
-        detail: `Just ${quietest.count} roster move${quietest.count === 1 ? '' : 's'} all season — autopilot engaged`,
-        info: 'Completed adds, drops, waiver claims and trades this season. Failed waiver bids are excluded.',
-        rows: moveCounts.map(m => ({ label: teamLabel(m.rid), value: `${m.count} move${m.count === 1 ? '' : 's'}`, moves: txnLog.get(m.rid) || ['No moves yet'] })),
-      });
-    }
-  }
-
   // Draft Grades: each drafted player's season points vs. his draft slot.
   // "Value" is pick number minus season scoring rank among all drafted
   // players: big positive = steal (drafted late, producing early), big
@@ -1164,70 +1042,6 @@ function render() {
           ...valued.slice().sort((a, b) => b.valueGap - a.valueGap).slice(0, 4).map(rowFor),
           ...valued.slice().sort((a, b) => a.valueGap - b.valueGap).slice(0, 4).map(rowFor),
         ],
-      });
-    }
-  }
-
-  // Rookie Reliance: teams leaning hardest on first-year players in
-  // their lineup this week.
-  {
-    const rookieCounts = aliveTeams.map(t => ({
-      rid: t.roster_id,
-      pids: t.starters.filter(pid => state.players[pid] && state.players[pid].years_exp === 0),
-    })).map(r => ({ ...r, count: r.pids.length })).filter(r => r.count > 0).sort((a, b) => b.count - a.count);
-    if (rookieCounts.length && rookieCounts[0].count >= 2) {
-      insightTiles.push({
-        eyebrow: 'Rookie Reliance',
-        headline: teamLabel(rookieCounts[0].rid),
-        detail: `Starting ${rookieCounts[0].count} rookies this week, the most in the league`,
-        info: "First-year players in this week's starting lineup. Rookie roles tend to grow through the season, so this is usually a bet that gets better with time.",
-        rows: rookieCounts.map(r => ({ label: teamLabel(r.rid), value: `${r.count} rookie${r.count === 1 ? '' : 's'}`, moves: r.pids.map(pid => `${playerLabel(pid).name} (${posOf(pid)}, ${playerLabel(pid).team || 'FA'}): ${fmt(projOf(state.projections, pid))} proj this week`) })),
-      });
-    }
-  }
-
-  // Grizzled Veterans: average roster age extremes.
-  {
-    const ageByRoster = aliveTeams.map(t => {
-      const ages = (t.players || []).map(pid => state.players[pid] && state.players[pid].age).filter(a => a != null);
-      const avg = ages.length ? ages.reduce((a, b) => a + b, 0) / ages.length : null;
-      const byAgeDesc = (t.players || []).filter(pid => state.players[pid] && state.players[pid].age != null)
-        .sort((a, b) => state.players[b].age - state.players[a].age);
-      return { roster_id: t.roster_id, avg, players: byAgeDesc };
-    }).filter(r => r.avg != null);
-    if (ageByRoster.length) {
-      const byAge = ageByRoster.slice().sort((a, b) => b.avg - a.avg);
-      const oldest = byAge[0], youngest = byAge[byAge.length - 1];
-      insightTiles.push({
-        eyebrow: 'Grizzled Veterans',
-        headline: teamLabel(oldest.roster_id),
-        detail: `Oldest roster in the league at ${oldest.avg.toFixed(1)} years average — ${teamLabel(youngest.roster_id)} is the youngest at ${youngest.avg.toFixed(1)}`,
-        info: 'Average age across the whole roster. RBs typically decline around 27–28 and WRs around 30, so an old roster is a bet on production now over later.',
-        rows: byAge.map(r => ({ label: teamLabel(r.roster_id), value: `${r.avg.toFixed(1)} yrs`, moves: r.players.map(pid => `${playerLabel(pid).name} (${posOf(pid)}): ${state.players[pid].age}`) })),
-      });
-    }
-  }
-
-  // Alma Mater: a roster stacked with players from the same college —
-  // pure trivia, only surfaced when it's actually notable (3+ players).
-  {
-    const collegeStacks = aliveTeams.map(t => {
-      const counts = new Map();
-      (t.players || []).forEach(pid => {
-        const college = state.players[pid] && state.players[pid].college;
-        if (college) counts.set(college, (counts.get(college) || 0) + 1);
-      });
-      let topCollege = null, topCount = 0;
-      counts.forEach((v, k) => { if (v > topCount) { topCount = v; topCollege = k; } });
-      const pids = (t.players || []).filter(pid => state.players[pid] && state.players[pid].college === topCollege);
-      return { roster_id: t.roster_id, topCollege, topCount, pids };
-    }).filter(s => s.topCount >= 3).sort((a, b) => b.topCount - a.topCount);
-    if (collegeStacks.length) {
-      insightTiles.push({
-        eyebrow: 'Alma Mater',
-        headline: `${collegeStacks[0].topCount} players from ${collegeStacks[0].topCollege}`,
-        detail: `${teamLabel(collegeStacks[0].roster_id)} is running a mini ${collegeStacks[0].topCollege} reunion`,
-        rows: collegeStacks.map(s => ({ label: teamLabel(s.roster_id), value: `${s.topCount} from ${s.topCollege}`, moves: s.pids.map(pid => `${playerLabel(pid).name} (${posOf(pid)}, ${playerLabel(pid).team || 'FA'})`) })),
       });
     }
   }
@@ -1301,38 +1115,6 @@ function render() {
     renderBoomBustList(document.getElementById('boom-list'), boomRows, 'boom', undefined, 'Nobody is beating their projection yet.');
     renderBoomBustList(document.getElementById('bust-list'), bustRows, 'bust', undefined, 'Nobody is under their projection yet.');
   }
-
-  // ---- Bench points ----
-  const benchList = document.getElementById('bench-list');
-  benchList.innerHTML = '';
-  // Same optimal-lineup gap as the Trash Talk tile: live points for
-  // players who've played, projections for everyone else.
-  document.getElementById('bench-note').textContent = anyPlayedThisWeek
-    ? `Week ${league.current_week} · best possible lineup minus the one set (live + projected for games not yet played)`
-    : `Week ${league.current_week} · best projected lineup minus the one currently set`;
-  const benchData = currentGaps.map(g => ({ roster_id: g.roster_id, bench: g.gap }));
-  const maxBench = Math.max(1, ...benchData.map(b => b.bench));
-  benchData.forEach(b => {
-    const t = teamByRoster.get(b.roster_id);
-    const row = document.createElement('div');
-    row.className = 'bench-row';
-    const name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = t ? (t.team_name || t.display_name) : `Roster ${b.roster_id}`;
-    const track = document.createElement('div');
-    track.className = 'bench-track';
-    const fill = document.createElement('div');
-    fill.className = 'bench-fill';
-    fill.style.width = Math.max(1, (b.bench / maxBench) * 100) + '%';
-    track.appendChild(fill);
-    const val = document.createElement('div');
-    val.className = 'bench-val';
-    val.textContent = fmt(b.bench);
-    row.appendChild(name);
-    row.appendChild(track);
-    row.appendChild(val);
-    benchList.appendChild(row);
-  });
 
   // ---- FAAB remaining: each team's waiver budget left, out of the
   // league's full season budget (not the highest remaining team — a $0
