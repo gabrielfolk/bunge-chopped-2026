@@ -24,33 +24,40 @@ the live one and its refresh automation is broken and abandoned (see session log
 
 ## Files
 
-- `index.html` — **the live site**, fully self-contained, fetches Sleeper directly.
-  Just needs to be served statically; no build step.
-- `dashboard.html` / `dashboard.template.html` / `data/` — legacy Claude Artifact
-  version (bootstrap-data-baked HTML + rebuild template + raw JSON snapshots).
+The live site is plain static files: no build step, no bundler, no framework.
+
+- `index.html`: page markup only. It loads the stylesheet and the scripts below.
+- `styles.css`: all styling (theme tokens, layout, dark mode).
+- `js/`: plain `<script>` files (not ES modules) that share one global scope.
+  `index.html` loads them in this order, and the order matters:
+  1. `config.js`: constants (league ID, cache keys, bye weeks) and the shared `state`.
+  2. `data.js`: Sleeper API fetching, the `cachedFetchJSON` localStorage cache, and
+     shaping raw responses (teams, matchups, chop history, season history).
+  3. `ui.js`: small render helpers (`esc`, `fmt`, avatars, detail panels, sync pill).
+  4. `render.js`: `render()`, which draws every dashboard section from `state`.
+  5. `main.js`: boot sequence and 30s polling.
+- `dashboard.html` / `dashboard.template.html` / `data/`: the legacy Claude Artifact
+  version (HTML with data baked in, a rebuild template, and raw JSON snapshots).
   Superseded by `index.html`; kept for history, not maintained.
 
-## Updating index.html
+## Updating the site
 
-No refresh process needed — it's always live. Just edit `index.html` directly
-(all the render logic and Sleeper-fetching logic lives in its one inline
-`<script>`), then:
+No refresh process is needed; the site is always live. Edit the relevant file, then:
 
 ```bash
-git add index.html && git commit -m "..." && git push
+git add -A && git commit -m "..." && git push
 ```
 
 GitHub Pages rebuilds automatically after a push (usually under a minute). Before
-committing, sanity-check the inline script and tag balance:
+committing, syntax-check the scripts:
 
 ```bash
-python3 -c "
-import re
-html = open('index.html').read()
-open('/tmp/index_inline.js','w').write(re.search(r'<script>(.*?)</script>', html, re.S).group(1))
-"
-node --check /tmp/index_inline.js
+for f in js/*.js; do node --check "$f"; done
 ```
+
+To preview locally, serve the folder (opening `index.html` as a `file://` URL also
+works, but a server is closer to Pages): `python3 -m http.server` and open
+http://localhost:8000.
 
 ## Legacy: rebuilding dashboard.html from data/ (Claude Artifact version, unused)
 
