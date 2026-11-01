@@ -1337,12 +1337,13 @@ function render() {
 
   // ---- FAAB remaining: each team's waiver budget left, out of the
   // league's full season budget (not the highest remaining team — a $0
-  // team should read as fully empty, not nearly full). ----
+  // team should read as fully empty, not nearly full). Chopped teams are
+  // left out: they can't bid anymore, so their leftover budget is moot. ----
   const faabBudget = league.waiver_budget;
   document.getElementById('faab-note').textContent = `$${faabBudget} budget per team to start the season`;
   const faabList = document.getElementById('faab-list');
   faabList.innerHTML = '';
-  teams.slice()
+  aliveTeams
     .map(t => ({ roster_id: t.roster_id, remaining: Math.max(0, faabBudget - (t.waiver_budget_used || 0)) }))
     .sort((a, b) => a.remaining - b.remaining)
     .forEach(f => {
