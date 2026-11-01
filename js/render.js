@@ -1046,6 +1046,73 @@ function render() {
     }
   }
 
+  // Alma Mater: a roster stacked with players from the same college —
+  // pure trivia, only surfaced when it's actually notable (3+ players).
+  {
+    const collegeStacks = aliveTeams.map(t => {
+      const counts = new Map();
+      (t.players || []).forEach(pid => {
+        const college = state.players[pid] && state.players[pid].college;
+        if (college) counts.set(college, (counts.get(college) || 0) + 1);
+      });
+      let topCollege = null, topCount = 0;
+      counts.forEach((v, k) => { if (v > topCount) { topCount = v; topCollege = k; } });
+      const pids = (t.players || []).filter(pid => state.players[pid] && state.players[pid].college === topCollege);
+      return { roster_id: t.roster_id, topCollege, topCount, pids };
+    }).filter(s => s.topCount >= 3).sort((a, b) => b.topCount - a.topCount);
+    if (collegeStacks.length) {
+      insightTiles.push({
+        eyebrow: 'Alma Mater',
+        headline: `${collegeStacks[0].topCount} players from ${collegeStacks[0].topCollege}`,
+        detail: `${teamLabel(collegeStacks[0].roster_id)} is running a mini ${collegeStacks[0].topCollege} reunion`,
+        rows: collegeStacks.map(s => ({ label: teamLabel(s.roster_id), value: `${s.topCount} from ${s.topCollege}`, moves: s.pids.map(pid => `${playerLabel(pid).name} (${posOf(pid)}, ${playerLabel(pid).team || 'FA'})`) })),
+      });
+    }
+  }
+
+  // Birthday Watch: upcoming birthdays among players on alive rosters.
+  // Pure trivia, like Alma Mater. Uses the viewer's local date; always shows
+  // the next few, and calls out any that land in the coming week.
+  {
+    const today = new Date();
+    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const upcoming = [];
+    aliveTeams.forEach(t => (t.players || []).forEach(pid => {
+      const p = state.players[pid];
+      const m = p && /^(\d{4})-(\d{2})-(\d{2})/.exec(p.birth_date || '');
+      if (!m) return;
+      const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+      let next = new Date(todayMid.getFullYear(), mo, d);
+      if (next < todayMid) next = new Date(todayMid.getFullYear() + 1, mo, d);
+      upcoming.push({ pid, rid: t.roster_id, next, inDays: Math.round((next - todayMid) / DAY_MS), turns: next.getFullYear() - y });
+    }));
+    upcoming.sort((a, b) => a.inDays - b.inDays);
+    if (upcoming.length) {
+      const whenLabel = u => u.inDays === 0 ? 'today'
+        : u.inDays === 1 ? 'tomorrow'
+        : u.next.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const thisWeek = upcoming.filter(u => u.inDays < 7);
+      const first = upcoming[0];
+      const firstLine = `${playerLabel(first.pid).name} turns ${first.turns} ${whenLabel(first)} (${teamLabel(first.rid)})`;
+      insightTiles.push({
+        eyebrow: 'Birthday Watch',
+        headline: thisWeek.length
+          ? `${thisWeek.length} birthday${thisWeek.length === 1 ? '' : 's'} this week`
+          : `Next up: ${playerLabel(first.pid).name}`,
+        detail: thisWeek.length > 1
+          ? `${firstLine}, plus ${thisWeek.length - 1} more before next week. Cake or chop?`
+          : `${firstLine}. Cake or chop?`,
+        info: 'Upcoming birthdays among players on rosters still alive, soonest first. No scientific evidence a birthday boy scores more, which has never stopped anyone from starting him.',
+        rows: upcoming.slice(0, 8).map(u => ({
+          label: `${playerLabel(u.pid).name} (${posOf(u.pid) || '—'}, ${playerLabel(u.pid).team || 'FA'})`,
+          value: `turns ${u.turns} · ${whenLabel(u)}`,
+          moves: [`On ${teamLabel(u.rid)}'s roster`, ...(u.inDays === 0 ? ['🎂 Happy birthday!'] : [])],
+        })),
+      });
+    }
+  }
+
   renderStatCards(insightsGrid, insightTiles, 'insight');
 
   // ---- Boom & bust: rostered players whose actual points this week are
